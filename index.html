@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="color-scheme" content="dark">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Záznam">
+  <meta name="description" content="Video nahrávač s malým náhľadom kamery v rohu displeja.">
+  <title>Video záznam</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-corner="tr">
+
+  <!-- Malý štvorec s náhľadom kamery (cca 2 × 2 cm) -->
+  <div id="pip" class="pip" role="img" aria-label="Náhľad kamery">
+    <video id="preview" playsinline muted autoplay></video>
+    <button id="pipEnable" class="pip-empty" type="button">Zapnúť<br>kameru</button>
+    <div class="pip-badge" aria-live="off"><span class="dot"></span><span id="pipTime">00:00</span></div>
+  </div>
+
+  <!-- Hlavná obrazovka (keď sa nenahráva) -->
+  <main id="home" class="home">
+    <header class="top">
+      <h1>Video záznam</h1>
+      <p id="status" class="status" role="status">Pripravujem kameru…</p>
+    </header>
+
+    <section class="controls" aria-label="Ovládanie">
+      <button id="switchBtn" class="round" type="button" aria-label="Prepnúť kameru (predná/zadná)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-2h6l2 2h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 13.5a3 3 0 0 0 5.2 1.6M15 12.5a3 3 0 0 0-5.2-1.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M14.6 16.4l-.4-1.3 1.3-.3M9.4 9.6l.4 1.3-1.3.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="recBtn" class="rec" type="button" aria-label="Spustiť nahrávanie"><span></span></button>
+      <button id="settingsBtn" class="round" type="button" aria-label="Nastavenia" aria-expanded="false" aria-controls="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+      </button>
+    </section>
+
+    <section id="settings" class="settings" hidden aria-label="Nastavenia">
+      <label class="row">
+        <span>Veľkosť náhľadu <output id="sizeOut"></output></span>
+        <input id="sizeInput" type="range" min="60" max="240" step="4">
+      </label>
+      <label class="row">
+        <span>Poloha náhľadu</span>
+        <select id="cornerInput">
+          <option value="tr">Vpravo hore</option>
+          <option value="br">Vpravo dole</option>
+          <option value="tl">Vľavo hore</option>
+          <option value="bl">Vľavo dole</option>
+        </select>
+      </label>
+      <label class="row">
+        <span>Kvalita videa</span>
+        <select id="qualityInput">
+          <option value="480">480p (šetrí miesto)</option>
+          <option value="720">720p HD</option>
+          <option value="1080">1080p Full HD</option>
+        </select>
+      </label>
+      <label class="row check">
+        <span>Nahrávať zvuk</span>
+        <input id="audioInput" type="checkbox">
+      </label>
+      <label class="row check">
+        <span>Počas nahrávania na celú obrazovku</span>
+        <input id="fullscreenInput" type="checkbox">
+      </label>
+      <p class="fine">Formát: <span id="formatInfo">–</span></p>
+    </section>
+
+    <section class="library" aria-labelledby="libTitle">
+      <div class="lib-head">
+        <h2 id="libTitle">Nahrávky</h2>
+        <span id="storageInfo" class="fine"></span>
+      </div>
+      <ul id="list" class="list"></ul>
+      <p id="empty" class="empty">Zatiaľ žiadne nahrávky. Ťuknite na červené tlačidlo.</p>
+    </section>
+  </main>
+
+  <!-- Obrazovka počas nahrávania: čierna, len náhľad v rohu + tlačidlo stop -->
+  <div id="recScreen" class="rec-screen" hidden>
+    <p id="recWarn" class="rec-warn">Nahráva sa · nezamykajte obrazovku</p>
+    <button id="stopBtn" class="stop" type="button" aria-label="Zastaviť nahrávanie"><span></span></button>
+  </div>
+
+  <!-- Prehrávač nahrávky -->
+  <dialog id="player" class="player">
+    <video id="playerVideo" controls playsinline></video>
+    <p id="playerInfo" class="fine"></p>
+    <div class="player-actions">
+      <button id="shareBtn" type="button">Zdieľať / Uložiť</button>
+      <a id="downloadLink" class="btn" href="#" download>Stiahnuť</a>
+      <button id="deleteBtn" type="button" class="danger">Zmazať</button>
+      <button id="closeBtn" type="button">Zavrieť</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
