@@ -1,5 +1,5 @@
 :root {
-  --pip: 120px;            /* veľkosť štvorca s náhľadom; ~2 cm na bežnom mobile */
+  --pip: 60px;             /* veľkosť štvorca s náhľadom; ~1 cm na bežnom mobile */
   --gap: 12px;
   --red: #ff3b30;
   --fg: #f2f2f2;
@@ -38,7 +38,12 @@ button, select, input, .btn { font: inherit; color: inherit; }
   height: var(--pip);
   top: calc(var(--safe-t) + var(--gap));
   right: calc(var(--safe-r) + var(--gap));
-  border-radius: 12px;
+}
+.pip-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: max(6px, calc(var(--pip) * .1));
   overflow: hidden;
   background: #111;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .18), 0 6px 20px rgba(0, 0, 0, .6);
@@ -64,27 +69,34 @@ body[data-corner="bl"] .pip { right: auto; left: calc(var(--safe-l) + var(--gap)
   display: none;
   border: 0;
   background: #1b1b1b;
-  font-size: 12px;
-  line-height: 1.25;
+  font-size: 10px;
+  line-height: 1.2;
   color: var(--muted);
   cursor: pointer;
 }
 .pip.off .pip-empty { display: block; }
 
+/* čas nahrávania je mimo štvorca, aby nezakrýval malý náhľad */
 .pip-badge {
   position: absolute;
-  left: 0; right: 0; bottom: 0;
+  top: calc(100% + 6px);
+  right: 0;
   display: none;
   align-items: center;
-  justify-content: center;
   gap: 5px;
-  padding: 3px 4px 4px;
-  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   letter-spacing: .02em;
-  background: linear-gradient(transparent, rgba(0, 0, 0, .75));
+  white-space: nowrap;
 }
+body[data-corner="tl"] .pip-badge,
+body[data-corner="bl"] .pip-badge { right: auto; left: 0; }
+body[data-corner="br"] .pip-badge,
+body[data-corner="bl"] .pip-badge { top: auto; bottom: calc(100% + 6px); }
 .dot {
   width: 7px; height: 7px;
   border-radius: 50%;
@@ -93,7 +105,7 @@ body[data-corner="bl"] .pip { right: auto; left: calc(var(--safe-l) + var(--gap)
 }
 @keyframes blink { to { visibility: hidden; } }
 
-body.recording .pip { box-shadow: 0 0 0 2px var(--red), 0 6px 20px rgba(0, 0, 0, .6); }
+body.recording .pip-frame { box-shadow: 0 0 0 2px var(--red), 0 6px 20px rgba(0, 0, 0, .6); }
 body.recording .pip-badge { display: flex; }
 
 /* ---------- Hlavná obrazovka ---------- */

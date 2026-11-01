@@ -18,10 +18,12 @@
 </head>
 <body data-corner="tr">
 
-  <!-- Malý štvorec s náhľadom kamery (cca 2 × 2 cm) -->
+  <!-- Malý štvorec s náhľadom kamery (cca 1 × 1 cm), čas nahrávania je pod ním -->
   <div id="pip" class="pip" role="img" aria-label="Náhľad kamery">
-    <video id="preview" playsinline muted autoplay></video>
-    <button id="pipEnable" class="pip-empty" type="button">Zapnúť<br>kameru</button>
+    <div class="pip-frame">
+      <video id="preview" playsinline muted autoplay></video>
+      <button id="pipEnable" class="pip-empty" type="button">Zapnúť<br>kameru</button>
+    </div>
     <div class="pip-badge" aria-live="off"><span class="dot"></span><span id="pipTime">00:00</span></div>
   </div>
 
@@ -45,7 +47,7 @@
     <section id="settings" class="settings" hidden aria-label="Nastavenia">
       <label class="row">
         <span>Veľkosť náhľadu <output id="sizeOut"></output></span>
-        <input id="sizeInput" type="range" min="60" max="240" step="4">
+        <input id="sizeInput" type="range" min="40" max="240" step="4">
       </label>
       <label class="row">
         <span>Poloha náhľadu</span>

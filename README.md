@@ -1,7 +1,7 @@
 # Video záznam
 
 Jednoduchý video nahrávač pre mobil. Počas nahrávania je celá obrazovka **čierna**
-a obraz z kamery vidíte len v **malom štvorčeku v pravom hornom rohu** (cca 2 × 2 cm),
+a obraz z kamery vidíte len v **malom štvorčeku v pravom hornom rohu** (cca 1 × 1 cm),
 spolu s časom nahrávania.
 
 Je to webová aplikácia (PWA) – netreba nič inštalovať z obchodu, stačí ju otvoriť
@@ -11,13 +11,13 @@ v prehliadači a voliteľne si ju pridať na plochu.
 
 1. Otvorte stránku v mobile a povoľte prístup ku kamere a mikrofónu.
 2. Ťuknite na **červené tlačidlo** – začne sa nahrávať. Obrazovka sčernie,
-   ostane len náhľad v rohu (červený rámik + čas) a tlačidlo **stop**.
+   ostane len malý náhľad v rohu (červený rámik, pod ním čas) a tlačidlo **stop**.
 3. Ťuknite na **stop** – nahrávka sa uloží do zoznamu **Nahrávky**.
 4. Ťuknutím na nahrávku ju prehráte, **zdieľate / uložíte do galérie**, stiahnete alebo zmažete.
 
 ### Nastavenia (ikona s posuvníkmi)
 
-- **Veľkosť náhľadu** – 60 až 240 px (predvolene 120 px ≈ 2 cm na bežnom mobile).
+- **Veľkosť náhľadu** – 40 až 240 px (predvolene 60 px ≈ 1 cm na bežnom mobile).
 - **Poloha náhľadu** – vpravo hore (predvolené), vpravo dole, vľavo hore, vľavo dole.
 - **Kvalita videa** – 480p / 720p / 1080p.
 - **Zvuk** – zapnúť / vypnúť mikrofón.

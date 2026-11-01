@@ -8,9 +8,9 @@ const QUALITY = {
   1080: { w: 1920, h: 1080, vbps: 5_000_000 },
 };
 
-// 120 CSS px zodpovedá na bežných mobiloch približne 2 × 2 cm.
+// 60 CSS px zodpovedá na bežných mobiloch približne 1 × 1 cm.
 const DEFAULTS = {
-  size: 120,
+  size: 60,
   corner: 'tr',
   quality: '720',
   audio: true,
