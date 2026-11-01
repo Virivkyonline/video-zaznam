@@ -1,5 +1,7 @@
 # Video záznam
 
+**Otvoriť v mobile:** https://video-zaznam.virivkyonlinecz.workers.dev
+
 Jednoduchý video nahrávač pre mobil. Počas nahrávania je celá obrazovka **čierna**
 a obraz z kamery vidíte len v **malom štvorčeku v pravom hornom rohu** (cca 1 × 1 cm),
 spolu s časom nahrávania.
@@ -47,10 +49,16 @@ python3 -m http.server 8000
 # otvorte http://localhost:8000
 ```
 
-Na mobile treba stránku zverejniť cez HTTPS, napr.:
+Na mobile treba stránku zverejniť cez HTTPS. Aktuálne beží ako Cloudflare Worker
+`video-zaznam` (súbory sú zabalené priamo v kóde Workera):
 
-- **GitHub Pages** – Settings → Pages → Deploy from branch → vetva / root,
-- **Cloudflare Pages** alebo **Netlify** – nahrať priečinok ako statickú stránku.
+```bash
+python3 deploy/build_worker.py . worker.js
+# worker.js nahrať ako Worker (napr. `npx wrangler deploy worker.js --name video-zaznam
+#   --compatibility-date 2025-01-01`) alebo cez Cloudflare dashboard
+```
+
+Rovnako dobre poslúži GitHub Pages, Cloudflare Pages alebo Netlify (statická stránka).
 
 Potom v mobile: menu prehliadača → **Pridať na plochu** – aplikácia sa bude otvárať
 ako samostatná appka a funguje aj bez internetu.
