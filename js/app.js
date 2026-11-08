@@ -17,7 +17,7 @@ import { scanCode, scannerSupported } from './scan.js';
 import { imageFileToDataURL, openPdf, renderPdfPage } from './importers.js';
 import { dataRecords, dataColumns } from './datasource.js';
 
-const VERSION = '1.2.1';
+const VERSION = '1.2.2';
 
 // ---------------------------------------------------------------- navigácia
 let current = '';
@@ -690,12 +690,34 @@ async function connectFlow(btn) {
   }
 }
 
+const isSamsung = /SamsungBrowser/i.test(navigator.userAgent);
+const isAndroid = /Android/i.test(navigator.userAgent);
+let pickerStuck = false;
+
+/** Odkaz, ktorý otvorí túto aplikáciu v Chrome (ak nie je nainštalovaný, otvorí Obchod Play). */
+function chromeIntentUrl() {
+  const fallback = encodeURIComponent('https://play.google.com/store/apps/details?id=com.android.chrome');
+  return `intent://${location.host}${location.pathname}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${fallback};end`;
+}
+
+function chromeNotice(strong) {
+  return h('div', { class: 'notice ' + (strong ? 'error' : 'info') },
+    icon(strong ? 'warn' : 'info', 20),
+    h('div', null,
+      h('div', null, strong
+        ? 'Samsung Internet neotvoril okno so zariadeniami – tento prehliadač vo vašom telefóne nepustí Bluetooth tlačiareň. Otvorte aplikáciu v prehliadači Chrome (je zadarmo, na Samsungu býva v priečinku Google):'
+        : 'Samsung Internet často nedovolí pripojiť Bluetooth tlačiareň. Ak sa po ťuknutí na „Vyhľadať“ nič neotvorí, otvorte aplikáciu v Chrome:'),
+      h('a', { class: 'btn btn-primary btn-block', href: chromeIntentUrl() }, 'Otvoriť v Chrome')));
+}
+
 function renderPrinter() {
   const body = $('#printer-body');
   const st = getStatus();
   const sup = bluetoothSupport();
   body.innerHTML = '';
   if (!sup.ok) body.append(h('div', { class: 'notice error' }, icon('warn', 20), h('span', null, sup.reason)));
+  if (isSamsung && !st.connected) body.append(chromeNotice(pickerStuck));
+  else if (!sup.ok && isAndroid) body.append(chromeNotice(false));
 
   body.append(h('h2', { class: 'sec-title' }, 'Moje zariadenia'));
   if (st.saved || st.connected) {
@@ -728,7 +750,20 @@ function renderPrinter() {
 
   const run = async (btn, all) => {
     btn.disabled = true;
-    try { await choosePrinter({ all }); toast('Tlačiareň je pripojená'); } catch (e) { toast(e.message || String(e), 5000); } finally { btn.disabled = false; }
+    // ak prehliadač po pár sekundách neukázal okno so zariadeniami, poradiť Chrome
+    let opened = false;
+    const onBlur = () => { opened = true; };
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onBlur);
+    const timer = setTimeout(() => {
+      if (!opened && isSamsung && !getStatus().connected) { pickerStuck = true; renderPrinter(); window.scrollTo(0, 0); }
+    }, 7000);
+    try { await choosePrinter({ all }); pickerStuck = false; toast('Tlačiareň je pripojená'); } catch (e) { toast(e.message || String(e), 5000); } finally {
+      clearTimeout(timer);
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onBlur);
+      btn.disabled = false;
+    }
   };
   const search = h('button', { class: 'btn btn-primary btn-lg btn-block', type: 'button' }, icon('bluetooth', 22), h('span', null, 'Vyhľadať tlačiareň SK58'));
   search.addEventListener('click', () => run(search, false));

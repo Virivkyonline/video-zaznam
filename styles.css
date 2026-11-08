@@ -413,3 +413,6 @@ select.input { appearance: none; background: #fff url("data:image/svg+xml,%3Csvg
 .diag-row b.ok { color: var(--ok); }
 .diag-row b.bad { color: #c62828; }
 .tips b { color: #3b4250; }
+.notice.info { background: #eef4ff; color: #1f4fae; }
+.notice > div { flex: 1; }
+.notice .btn-block { margin: 10px 0 2px; color: #fff; text-decoration: none; }
