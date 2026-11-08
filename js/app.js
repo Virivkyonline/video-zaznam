@@ -18,7 +18,7 @@ import { scanCode, scannerSupported } from './scan.js';
 import { imageFileToDataURL, openPdf, renderPdfPage } from './importers.js';
 import { dataRecords, dataColumns } from './datasource.js';
 
-const VERSION = '1.3.1';
+const VERSION = '1.3.2';
 
 // ---------------------------------------------------------------- navigácia
 let current = '';
@@ -345,6 +345,7 @@ function labelWarnings(label) {
     }
     if (it.type === 'qr' && !qrMatrix(applyVars(it.data, vars), it.ec || 'M')) out.push('QR kód je prázdny alebo príliš dlhý – nevytlačí sa.');
     if (it.type === 'image' && !it.src) out.push('Obrázok nie je vybraný.');
+    if ((it.type === 'barcode' || it.type === 'qr') && (it.tilt || 0) % 90) out.push('Natočený čiarový/QR kód (nie o násobok 90°) sa môže horšie čítať.');
     if (it.x < -0.2 || it.y < -0.2 || it.x + it.w > label.w + 0.2 || it.y + it.h > label.h + 0.2) {
       out.push('Niektorý prvok presahuje okraj etikety.');
     } else if (it.type !== 'shape' && cut.some((r) => overlaps(it, r))) cutHit = true;

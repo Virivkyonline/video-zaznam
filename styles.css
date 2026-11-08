@@ -431,3 +431,5 @@ select.input { appearance: none; background: #fff url("data:image/svg+xml,%3Csvg
 .notice .btn-ghost { background: transparent; border-color: currentColor; color: inherit; }
 .about .btn-block { text-decoration: none; color: #fff; }
 .fix-btn { display: flex; margin-top: 8px; }
+.tilt-val { color: var(--accent); margin-left: 4px; }
+.seg-multi button span { font-size: 14px; }

@@ -519,7 +519,10 @@ export function drawItem(ctx, it, s, o = {}) {
   ctx.save();
   if (o.print) ctx.translate(Math.round(cx), Math.round(cy));
   else ctx.translate(cx, cy);
-  if (it.rot) ctx.rotate((it.rot * Math.PI) / 180);
+  // otočenie po 90° (mení rámček) + jemné natočenie v ľubovoľnom uhle + zrkadlenie
+  const ang = (it.rot || 0) + (it.tilt || 0);
+  if (ang) ctx.rotate((ang * Math.PI) / 180);
+  if (it.flipH || it.flipV) ctx.scale(it.flipH ? -1 : 1, it.flipV ? -1 : 1);
   const ls = localSize(it);
   const W = ls.w * s, H = ls.h * s;
   switch (it.type) {

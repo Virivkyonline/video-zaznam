@@ -1,5 +1,5 @@
 // Service worker: aplikácia funguje aj bez internetu (po prvom otvorení).
-const CACHE = 'tlac-etikiet-v9';
+const CACHE = 'tlac-etikiet-v10';
 const ASSETS = [
   './',
   'index.html',

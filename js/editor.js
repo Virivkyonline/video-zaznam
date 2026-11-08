@@ -278,6 +278,15 @@ function draw() {
     ctx.lineWidth = 1.5;
     if (it.locked) ctx.setLineDash([5, 3]);
     ctx.strokeRect(it.x * z, it.y * z, it.w * z, it.h * z);
+    if (it.tilt) {
+      ctx.save();
+      ctx.translate((it.x + it.w / 2) * z, (it.y + it.h / 2) * z);
+      ctx.rotate((it.tilt * Math.PI) / 180);
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1;
+      ctx.strokeRect((-it.w / 2) * z, (-it.h / 2) * z, it.w * z, it.h * z);
+      ctx.restore();
+    }
     ctx.setLineDash([]);
     for (const hd of handlesFor(it)) {
       ctx.beginPath();
@@ -634,6 +643,11 @@ function renderPanel() {
         onclick: () => { it.locked = !it.locked; commit(); renderPanel(); draw(); toast(it.locked ? 'Prvok je zamknutý' : 'Prvok je odomknutý'); },
         html: svgIcon(it.locked ? 'lock' : 'unlock', 20),
       }),
+      h('button', {
+        class: 'icon-btn', type: 'button', title: 'Otočiť o 90°', 'aria-label': 'Otočiť o 90°',
+        onclick: () => { if (it.locked) { toast('Prvok je zamknutý'); return; } setRotation(it, ((it.rot || 0) + 90) % 360); renderPanel(); },
+        html: svgIcon('rotate', 20),
+      }),
       h('button', { class: 'icon-btn', type: 'button', title: 'Kopírovať', 'aria-label': 'Kopírovať', onclick: duplicateSelected, html: svgIcon('copy', 20) }),
       h('button', { class: 'icon-btn', type: 'button', title: 'Dopredu', 'aria-label': 'Dopredu', onclick: () => moveLayer(1), html: svgIcon('front', 20) }),
       h('button', { class: 'icon-btn', type: 'button', title: 'Dozadu', 'aria-label': 'Dozadu', onclick: () => moveLayer(-1), html: svgIcon('backward', 20) }),
@@ -801,6 +815,7 @@ function imageProps(it, body) {
     field('Sýtosť', h('div', { class: 'range-row' }, h('span', { class: 'muted' }, 'svetlejšie'), thr, h('span', { class: 'muted' }, 'tmavšie'))),
     row('Invertovať farby', toggle(!!it.invert, (v) => update(it, { invert: v }, { soon: false }))),
     row('Roztiahnuť na celý rámček', toggle(it.fit === 'stretch', (v) => update(it, { fit: v ? 'stretch' : 'contain' }, { soon: false }))),
+    mirrorField(it),
   );
 }
 
@@ -854,10 +869,35 @@ function positionProps(it) {
       field('Výška', E.posFields.h),
     ),
     it.type !== 'line' ? field('Otočenie', segmented([0, 90, 180, 270].map((r) => ({ value: r, label: r + '°' })), it.rot || 0, (v) => setRotation(it, Number(v)))) : null,
+    tiltField(it),
     field('Zarovnať na etikete', h('div', { class: 'seg seg-multi seg-tools' },
       ab('l', 'edgeL', 'K ľavému okraju'), ab('cx', 'centerH', 'Na stred vodorovne'), ab('r', 'edgeR', 'K pravému okraju'),
       ab('t', 'edgeT', 'K hornému okraju'), ab('cy', 'centerV', 'Na stred zvisle'), ab('b', 'edgeB', 'K dolnému okraju'))),
   );
+}
+
+/** Jemné natočenie v ľubovoľnom uhle (−180° až 180°). */
+function tiltField(it) {
+  const val = h('b', { class: 'tilt-val' }, `${it.tilt || 0}°`);
+  const range = h('input', { type: 'range', class: 'range', min: -180, max: 180, step: 1, value: it.tilt || 0 });
+  const setTilt = (v) => {
+    v = Math.max(-180, Math.min(180, Math.round(v)));
+    range.value = v;
+    val.textContent = `${v}°`;
+    update(it, { tilt: v });
+  };
+  range.addEventListener('input', () => setTilt(Number(range.value)));
+  const btn = (label, fn) => h('button', { class: 'btn btn-sm', type: 'button', onclick: fn }, label);
+  return field(h('span', null, 'Jemné natočenie ', val), h('div', null,
+    h('div', { class: 'range-row' }, btn('−1°', () => setTilt((it.tilt || 0) - 1)), range, btn('+1°', () => setTilt((it.tilt || 0) + 1))),
+    h('div', { class: 'chips' }, [-45, -15, 0, 15, 45].map((a) => h('button', { class: 'chip chip-sm', type: 'button', onclick: () => setTilt(a) }, a === 0 ? 'Rovno (0°)' : `${a > 0 ? '+' : ''}${a}°`)))));
+}
+
+/** Zrkadlenie (napr. obrázka alebo ikony). */
+function mirrorField(it) {
+  return field('Zrkadliť', h('div', { class: 'seg seg-multi' },
+    styleBtn(it, 'flipH', h('span', null, '↔ vodorovne'), 'Zrkadliť vodorovne'),
+    styleBtn(it, 'flipV', h('span', null, '↕ zvisle'), 'Zrkadliť zvisle')));
 }
 
 /** Tlačiteľná časť etikety (bez šrafovaných okrajov) v mm. */
@@ -969,6 +1009,7 @@ function iconProps(it, body) {
   body.append(
     h('div', { class: 'btn-row' }, change),
     field('Hrúbka čiar', stepper(it.weight ?? 2, { step: 0.25, min: 0.75, max: 4, dec: 2 }, (v) => update(it, { weight: v }))),
+    mirrorField(it),
   );
 }
 
