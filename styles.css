@@ -428,3 +428,5 @@ select.input { appearance: none; background: #fff url("data:image/svg+xml,%3Csvg
 .scan-state { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #4a5160; margin: 4px 0 8px; }
 .spinner { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid #d6dce6; border-top-color: var(--accent); animation: spin .8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.notice .btn-ghost { background: transparent; border-color: currentColor; color: inherit; }
+.about .btn-block { text-decoration: none; color: #fff; }

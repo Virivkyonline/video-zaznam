@@ -1,6 +1,9 @@
 # Tlač etikiet
 
-**Otvoriť v mobile (Samsung Internet alebo Chrome):** https://tlac-etikiet.virivkyonlinecz.workers.dev
+**Android aplikácia (APK):** https://github.com/Virivkyonline/video-zaznam/releases/download/apk/tlac-etikiet.apk
+– funguje bez prehliadača, k tlačiarni sa pripája priamo cez Bluetooth telefónu.
+
+**Webová verzia (Chrome):** https://tlac-etikiet.virivkyonlinecz.workers.dev
 
 Slovenská aplikácia na návrh a tlač etikiet na **Bluetooth tlačiarni SK58** (Sinmark)
 a podobných tlačiarňach s príkazmi ESC/POS. Funguje ako webová aplikácia (PWA) priamo
@@ -45,6 +48,23 @@ Funkcie zodpovedajú aplikácii Sinmark / OpenLabel, ale všetko je po slovensky
   pás, posun, sýtosť, typ papiera), rozšírené nastavenia, záloha etikiet (export/import).
 
 Etikety sa ukladajú v prehliadači (IndexedDB). Aplikácia funguje aj offline.
+
+## Android aplikácia (APK)
+
+1. V mobile otvorte odkaz na **tlac-etikiet.apk** (vyššie) a súbor stiahnite.
+2. Ťuknite na stiahnutý súbor. Android sa opýta, či povoliť inštaláciu z tohto zdroja
+   (napr. „Samsung Internet“ alebo „Moje súbory“) → **Nastavenia → Povoliť** → späť → **Inštalovať**.
+   Ak Google Play Protect zobrazí varovanie (neznámy vývojár), zvoľte **Napriek tomu inštalovať**.
+3. Otvorte aplikáciu **Tlač etikiet** → ikona tlačiarne → **Vyhľadať tlačiareň SK58**.
+   Pri prvom hľadaní povoľte **Zariadenia v blízkosti** (na starších Androidoch **Polohu**).
+4. V zozname ťuknite na **SK58_…** – tlačiareň sa pripojí a nabudúce sa pripojí sama.
+
+Aplikácia obsahuje celú webovú časť (priečinok `android/` + súbory z koreňa repozitára),
+Bluetooth zabezpečuje `BleBridge.java` (BLE služba 0x18F0 / charakteristika 0x2AF1, zápis po
+balíkoch). APK zostavuje GitHub Actions (`.github/workflows/android.yml`) pri každej zmene
+a zverejní ho ako release `apk`. Podpisový kľúč `android/release.keystore` je v repozitári,
+aby sa nové verzie dali nainštalovať cez starú (pre vyššiu bezpečnosť ho možno nahradiť
+secretom `ANDROID_KEYSTORE_B64`).
 
 ## Ako sa pripojiť k tlačiarni
 

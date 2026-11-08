@@ -750,6 +750,8 @@ const isSamsung = /SamsungBrowser/i.test(navigator.userAgent) && !isNativeApp();
 const isAndroid = /Android/i.test(navigator.userAgent);
 let pickerStuck = false;
 
+const APK_URL = 'https://github.com/Virivkyonline/video-zaznam/releases/download/apk/tlac-etikiet.apk';
+
 /** Odkaz, ktorý otvorí túto aplikáciu v Chrome (ak nie je nainštalovaný, otvorí Obchod Play). */
 function chromeIntentUrl() {
   const fallback = encodeURIComponent('https://play.google.com/store/apps/details?id=com.android.chrome');
@@ -761,9 +763,10 @@ function chromeNotice(strong) {
     icon(strong ? 'warn' : 'info', 20),
     h('div', null,
       h('div', null, strong
-        ? 'Samsung Internet neotvoril okno so zariadeniami – tento prehliadač vo vašom telefóne nepustí Bluetooth tlačiareň. Otvorte aplikáciu v prehliadači Chrome (je zadarmo, na Samsungu býva v priečinku Google):'
-        : 'Samsung Internet často nedovolí pripojiť Bluetooth tlačiareň. Ak sa po ťuknutí na „Vyhľadať“ nič neotvorí, otvorte aplikáciu v Chrome:'),
-      h('a', { class: 'btn btn-primary btn-block', href: chromeIntentUrl() }, 'Otvoriť v Chrome')));
+        ? 'Samsung Internet neotvoril okno so zariadeniami – tento prehliadač vo vašom telefóne nepustí Bluetooth tlačiareň. Nainštalujte si Android aplikáciu (funguje bez prehliadača):'
+        : 'Samsung Internet často nedovolí pripojiť Bluetooth tlačiareň. Najistejšia je Android aplikácia:'),
+      h('a', { class: 'btn btn-primary btn-block', href: APK_URL }, 'Stiahnuť Android aplikáciu (APK)'),
+      h('a', { class: 'btn btn-block btn-ghost', href: chromeIntentUrl() }, 'alebo otvoriť v Chrome')));
 }
 
 function renderPrinter() {
@@ -1023,6 +1026,7 @@ async function renderMe() {
 
     h('h2', { class: 'sec-title' }, 'O aplikácii'),
     h('div', { class: 'card-plain about' },
+      isAndroid && !isNativeApp() ? h('a', { class: 'btn btn-primary btn-block', href: APK_URL }, 'Stiahnuť Android aplikáciu (APK)') : null,
       installEvt ? h('button', {
         class: 'btn btn-primary btn-block', type: 'button',
         onclick: async () => { installEvt.prompt(); await installEvt.userChoice; installEvt = null; renderMe(); },
