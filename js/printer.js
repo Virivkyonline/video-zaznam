@@ -397,7 +397,7 @@ export async function rasterize(label, vars, cfg = getSettings()) {
   const c = document.createElement('canvas');
   c.width = Wd; c.height = Hd;
   const ctx = c.getContext('2d', { willReadFrequently: true });
-  drawLabel(ctx, label, DPMM, { print: true, vars: vars || makeVars(label) });
+  drawLabel(ctx, label, DPMM, { print: true, vars: vars || makeVars(label), barReduce: cfg.barReduce || 0 });
   const px = ctx.getImageData(0, 0, Wd, Hd).data;
 
   const dir = labelDir(label);

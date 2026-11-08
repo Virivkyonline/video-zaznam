@@ -359,6 +359,8 @@ function drawBarcode(ctx, it, W, H, s, o) {
   const guardH = isEan && showText ? Math.min(H, R(barH + textH * 0.5)) : barH;
   const bits = enc.bits;
   const isGuard = (i) => isEan && enc.guards.some(([a, b]) => i >= a && i < b);
+  // zúženie čiar pri tlači (vyrovná rozpitie čiar na termotlačiarni), najviac o modul − 1 bod
+  const reduce = o.print ? Math.max(0, Math.min(m - 1, it.reduce ?? o.barReduce ?? 0)) : 0;
   ctx.fillStyle = '#000';
   let i = 0;
   while (i < bits.length) {
@@ -366,7 +368,7 @@ function drawBarcode(ctx, it, W, H, s, o) {
     const g = isGuard(i);
     let j = i;
     while (j < bits.length && bits[j] === '1' && isGuard(j) === g) j++;
-    ctx.fillRect(x0 + i * mpx, top, (j - i) * mpx, g ? guardH : barH);
+    ctx.fillRect(x0 + i * mpx, top, (j - i) * mpx - reduce, g ? guardH : barH);
     i = j;
   }
   if (!showText) return;

@@ -18,7 +18,7 @@ import { scanCode, scannerSupported } from './scan.js';
 import { imageFileToDataURL, openPdf, renderPdfPage } from './importers.js';
 import { dataRecords, dataColumns } from './datasource.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 
 // ---------------------------------------------------------------- navigácia
 let current = '';
@@ -867,6 +867,59 @@ function renderPrinter() {
   );
 }
 
+/** Test čitateľnosti čiarových kódov: etiketa A bez zúženia čiar, B so zúžením o 1 bod. */
+const TEST_CODES = { A: '2000000000008', B: '2000000000015' };
+
+function barcodeTestSection(getSize) {
+  const out = h('div', { class: 'print-msg' });
+  const choose = h('div', { class: 'btn-row', hidden: true });
+  const useVariant = (red) => {
+    setSettings({ barReduce: red });
+    refreshEditor();
+    toast(red ? 'Nastavené: zúženie čiar o 1 bod' : 'Nastavené: bez zúženia čiar');
+  };
+  const printBtn = h('button', { class: 'btn btn-block', type: 'button' }, icon('barcode', 20), h('span', null, 'Vytlačiť test kódov (2 etikety)'));
+  printBtn.addEventListener('click', async () => {
+    printBtn.disabled = true;
+    const [w, hh] = getSize().split('x').map(Number);
+    const top = Math.min(getSettings().topSkip || 0, hh * 0.4) + 0.3;
+    const mk = (code, red) => {
+      const l = newLabel(w, hh, 'Test kódu');
+      l.items.push(newItem('barcode', l, { format: 'EAN13', data: code, x: 1, y: top, w: w - 2, h: Math.max(6, hh - top - 0.6), reduce: red }));
+      return l;
+    };
+    const labels = [mk(TEST_CODES.A, 0), mk(TEST_CODES.B, 1)];
+    try {
+      await ensureConnected();
+      out.className = 'print-msg';
+      out.textContent = 'Posielam…';
+      await printJobs(2, (i) => ({ label: labels[i], vars: makeVars(labels[i]) }), {
+        onProgress: (i, n, f) => { out.textContent = `Posielam ${i + 1}/${n}… ${Math.round(f * 100)} %`; },
+      });
+      out.textContent = 'Vytlačené: prvá etiketa = A (bez zúženia), druhá = B (zúženie 1 bod). Teraz každú naskenujte.';
+      out.className = 'print-msg ok';
+    } catch (e) { out.textContent = e.message; out.className = 'print-msg error'; } finally { printBtn.disabled = false; }
+  });
+  const scanBtn = h('button', { class: 'btn btn-block', type: 'button' }, icon('camera', 20), h('span', null, 'Naskenovať testovaciu etiketu'));
+  scanBtn.addEventListener('click', async () => {
+    const r = await scanCode({ title: 'Naskenujte etiketu A alebo B' });
+    if (!r) return;
+    const t = r.text.trim();
+    choose.hidden = false;
+    if (t === TEST_CODES.A) { out.textContent = `Etiketa A sa číta správne (${t}) ✓`; out.className = 'print-msg ok'; }
+    else if (t === TEST_CODES.B) { out.textContent = `Etiketa B sa číta správne (${t}) ✓`; out.className = 'print-msg ok'; }
+    else { out.textContent = `Prečítalo sa „${t}“ – to je CHYBNÉ čítanie (správne je ${TEST_CODES.A} alebo ${TEST_CODES.B}).`; out.className = 'print-msg error'; }
+  });
+  choose.append(
+    h('button', { class: 'btn', type: 'button', onclick: () => useVariant(0) }, 'Použiť A'),
+    h('button', { class: 'btn btn-primary', type: 'button', onclick: () => useVariant(1) }, 'Použiť B'),
+  );
+  return h('div', { class: 'calib-codes' },
+    h('div', { class: 'props-sub' }, 'Test čiarových kódov'),
+    h('p', { class: 'field-hint' }, 'Ak sa vytlačené kódy čítajú zle alebo ukazujú iné číslo, čiary sa pri tlači rozpíjajú. Vytlačia sa 2 etikety s rôznou hrúbkou čiar – naskenujte obe a zvoľte tú, ktorá sa prečíta správne (ak obe, zvoľte B).'),
+    printBtn, scanBtn, out, choose);
+}
+
 /** Sprievodca nastavením tlače: testovacie etikety s pravítkom a uloženie zistených hodnôt. */
 async function printTest() {
   const cfg = getSettings();
@@ -932,7 +985,8 @@ async function printTest() {
           { value: 'none', label: 'Žiadny' },
         ], feed, (v) => { feed = v; })),
       ),
-      msg, result),
+      msg, result,
+      barcodeTestSection(() => val)),
     footer: [h('button', { class: 'btn', type: 'button', onclick: () => s.close() }, 'Zavrieť'), go2],
   });
 }
@@ -988,6 +1042,11 @@ async function renderMe() {
         field('Posun nadol', stepper(cfg.offsetY, { step: 0.5, min: -10, max: 10, suffix: 'mm' }, set('offsetY'))),
       ),
       field('Sýtosť textu a čiar', h('div', { class: 'range-row' }, h('span', { class: 'muted' }, 'tenšie'), thr, h('span', { class: 'muted' }, 'hrubšie'))),
+      field('Zúženie čiar čiarového kódu', select([
+        { value: 0, label: 'Bez zúženia' },
+        { value: 1, label: 'O 1 bod (čiary sa rozpíjajú)' },
+        { value: 2, label: 'O 2 body (veľké etikety)' },
+      ], cfg.barReduce || 0, (v) => setSettings({ barReduce: Number(v) })), 'Ak sa vytlačené čiarové kódy nedajú prečítať alebo ukazujú iné číslo. Vyskúšajte v Sprievodcovi nastavením (test kódov).'),
       field('Typ papiera / posun po etikete', select([
         { value: 'gsff', label: 'Etikety (medzera / čierna značka)' },
         { value: 'ff', label: 'Etikety s medzerou (príkaz FF)' },

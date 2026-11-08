@@ -86,6 +86,7 @@ export const DEFAULT_SETTINGS = {
   chunk: 20, // veľkosť balíka pre Bluetooth (bajty)
   delay: 10, // pauza medzi balíkmi (ms)
   copyPause: 300, // pauza medzi kópiami (ms)
+  barReduce: 0, // zúženie čiar čiarových kódov pri tlači (body)
   lastW: 50,
   lastH: 30,
   showAll: false, // pri hľadaní zobraziť všetky Bluetooth zariadenia

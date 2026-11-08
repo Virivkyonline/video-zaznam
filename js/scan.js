@@ -73,20 +73,34 @@ export function scanCode({ title = 'Skenovať kód' } = {}) {
       video.srcObject = stream;
       try { await video.play(); } catch { /* autoplay */ }
       status.textContent = 'Namierte fotoaparát na čiarový alebo QR kód.';
+      // Kód sa prijme až vtedy, keď sa rovnako prečíta niekoľkokrát po sebe –
+      // jednotlivé snímky kamery sa občas prečítajú chybne (najmä malé čiarové kódy).
+      const NEED = 3;
+      let last = '';
+      let streak = 0;
       const tick = async () => {
         if (!stream) return;
         try {
           if (video.readyState >= 2) {
             const codes = await detector.detect(video);
-            if (codes.length && codes[0].rawValue) {
-              result = { text: codes[0].rawValue, format: FORMAT_MAP[codes[0].format] || null };
-              navigator.vibrate?.(60);
-              s.close();
-              return;
+            const c = codes.find((x) => x.rawValue);
+            if (c) {
+              const key = c.format + '|' + c.rawValue;
+              streak = key === last ? streak + 1 : 1;
+              last = key;
+              status.textContent = streak < NEED ? `Čítam kód… ${c.rawValue} (držte telefón v pokoji)` : 'Hotovo';
+              if (streak >= NEED) {
+                result = { text: c.rawValue, format: FORMAT_MAP[c.format] || null };
+                navigator.vibrate?.(60);
+                s.close();
+                return;
+              }
+            } else if (streak) {
+              streak = Math.max(0, streak - 1);
             }
           }
         } catch { /* ďalší pokus */ }
-        timer = setTimeout(tick, 160);
+        timer = setTimeout(tick, 120);
       };
       tick();
     })();
