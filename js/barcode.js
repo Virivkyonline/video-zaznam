@@ -240,6 +240,21 @@ export function encodeBarcode(format, data) {
   return r;
 }
 
+const GTIN_LEN = { EAN13: 13, EAN8: 8, UPCA: 12, ITF14: 14 };
+
+/**
+ * Návrh opravy neplatného kódu (EAN/UPC/ITF-14): pri nesprávnej kontrolnej číslici vráti
+ * kód so správnou číslicou, inak null.
+ */
+export function suggestFix(format, data) {
+  const len = GTIN_LEN[format];
+  if (!len) return null;
+  const d = String(data ?? '').replace(/[\s-]/g, '');
+  if (!/^\d+$/.test(d) || d.length !== len) return null;
+  const fixed = d.slice(0, -1) + gtinCheck(d.slice(0, -1));
+  return fixed === d ? null : fixed;
+}
+
 /** Odhad formátu z načítaného kódu (napr. zo skenera). */
 export function guessFormat(text) {
   const d = String(text).trim();

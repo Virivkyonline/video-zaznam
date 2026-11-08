@@ -5,7 +5,7 @@ import {
   clamp, fmt, debounce, pickFile,
 } from './ui.js';
 import { drawLabel, localSize, measureText, measureTextHeight, FONTS, setImageReadyCallback, makeVars, applyVars, barcodeModuleDots } from './render.js';
-import { FORMATS, encodeBarcode, guessFormat } from './barcode.js';
+import { FORMATS, encodeBarcode, guessFormat, suggestFix } from './barcode.js';
 import { newItem, SIZE_PRESETS } from './templates.js';
 import { getSettings } from './store.js';
 import { unprintableRects, labelDir } from './printer.js';
@@ -710,7 +710,17 @@ function barcodeProps(it, body) {
     const raw = applyVars(it.data, makeVars(E.label));
     const enc = encodeBarcode(it.format, raw);
     msg.className = 'field-hint' + (enc.ok ? '' : ' error');
-    if (!enc.ok) { msg.textContent = enc.error; return; }
+    if (!enc.ok) {
+      msg.textContent = enc.error + ' – takýto kód sa nevytlačí.';
+      const fix = suggestFix(it.format, raw);
+      if (fix) {
+        msg.append(h('button', {
+          class: 'btn btn-sm btn-primary fix-btn', type: 'button',
+          onclick: () => { inp.value = fix; update(it, { data: fix }, { soon: false }); validate(); },
+        }, `Opraviť na ${fix}`));
+      }
+      return;
+    }
     const { m } = barcodeModuleDots(it, enc, localSize(it).w);
     let t = `Kódované: ${enc.text}`;
     if (/EAN|UPC|ITF14/.test(it.format) && raw.replace(/\D/g, '').length < enc.text.length) t += ` (doplnená kontrolná číslica ${enc.text.slice(-1)})`;
