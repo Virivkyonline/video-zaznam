@@ -7,30 +7,40 @@ v Androide** a voliteľne si ju pridať na plochu.
 
 ## Čo vie
 
-- **Domov** – stav tlačiarne, rýchle akcie **Vytvoriť**, **PDF**, **Obrázok**, **Skenovať**
-  a zoznam **Posledné** (náhľad, názov, rozmer, ponuka ⋯: Tlačiť, Upraviť, Duplikovať,
-  Premenovať, Zmazať).
-- **Šablóny** – hotové etikety: čiarový kód EAN-13 (35×20), názov + kód, cenovka,
-  skladová etiketa (Code 128), inventárne číslo s číslovaním, QR kód s textom,
-  dátum výroby a spotreby, adresa odosielateľa, rámček s nápisom, biely text na čiernom…
-- **Editor** – prvky **Text**, **Čiarový kód**, **QR kód**, **Obrázok**, **Dátum**,
-  **Číslovanie**, **Čiara**, **Rámček/elipsa**. Prvky sa presúvajú ťahaním, veľkosť sa mení
-  úchytmi, dajú sa otáčať o 90°, kopírovať, posúvať dopredu/dozadu. Vodiace čiary pri
-  zarovnaní na stred a k okrajom, krok späť / znova.
+Funkcie zodpovedajú aplikácii Sinmark / OpenLabel, ale všetko je po slovensky.
+
+- **Domov** – stav tlačiarne, rýchle akcie **Vytvoriť**, **PDF**, **Obrázok**, **Skenovať**,
+  zoznam **Posledné** (ponuka ⋯: Tlačiť, Upraviť, Uložiť/zdieľať ako obrázok, Duplikovať,
+  Premenovať, Zmazať) a **História tlače** (ikona hodín).
+- **Šablóny** – čiarový kód EAN-13, názov + kód, cenovka, skladová etiketa (Code 128),
+  inventárne číslo s číslovaním, tabuľka parametrov, QR kód s textom, dátum spotreby,
+  adresa, kontakt s ikonami, „Krehké“ so symbolmi, rámček, biely text na čiernom…
+- **Editor** – prvky **Text**, **Čiarový kód**, **QR kód**, **Obrázok**, **Tabuľka**,
+  **Ikona**, **Dátum a čas**, **Číslovanie**, **Excel**, **Čiara**, **Rámček/elipsa**.
+  Presun ťahaním, zmena veľkosti úchytmi, otáčanie o 90°, kopírovanie, poradie vrstiev,
+  **zamknutie** prvku, **zarovnanie** k okrajom a na stred, vodiace čiary, krok späť/znova.
   - Text: písmo, veľkosť, tučné, kurzíva, podčiarknuté, biely na čiernom, zarovnanie,
-    zalamovanie, automatické zmenšenie, aby sa zmestil.
-  - Premenné v texte aj v kódoch: `{datum}`, `{datum+7}` (o 7 dní), `{cas}`, `{rok}`,
-    `{cislo}` (poradové číslo – pri tlači viacerých kópií sa zvyšuje a pamätá si ďalšie).
+    riadkovanie, rozostup písmen, zalamovanie, automatické zmenšenie.
+  - Premenné v texte aj v kódoch: `{datum}`, `{datum+7}`, `{cas}`, `{den}` (deň v týždni),
+    `{mesiac}`, `{rok}`, `{cislo}` (poradové číslo) a stĺpce z Excelu `{Názov stĺpca}`.
   - Čiarové kódy: EAN-13, EAN-8, UPC-A, Code 128, Code 39 (kontrolná číslica sa doplní
-    sama). Kód sa dá **naskenovať fotoaparátom**.
+    sama); kód sa dá **naskenovať fotoaparátom**.
+  - **Tabuľka**: riadky, stĺpce, pomer šírok, hrúbka čiar, tučná hlavička/prvý stĺpec.
+  - **Ikony**: ~50 symbolov (krehké, touto stranou hore, chrániť pred vlhkom, recyklácia,
+    teplota, mrazené, telefón, e-mail, web, poloha, košík, euro, bio…).
   - Obrázky a PDF sa prevedú na čiernobiele (rastrovanie pre fotky, prah pre logá).
-- **Tlač** – náhľad presne toho, čo dostane tlačiareň, upozornenia (neplatný kód, prvok
-  mimo tlačiteľnej plochy), počet kópií, číslovanie, priebeh odosielania.
+- **Excel / CSV – hromadná tlač** – načíta `.xlsx` (aj viac hárkov, dátumy a čísla
+  s formátom) alebo `.csv` (UTF-8 aj Windows-1250, oddeľovač `;` alebo `,`). Stĺpce sa
+  vkladajú do textu, kódov aj tabuliek; pri tlači sa zvolí rozsah záznamov a pre každý
+  riadok sa vytlačí etiketa.
+- **PDF** – jedna strana do editora, alebo **tlač všetkých strán** naraz (každá strana =
+  jedna etiketa, napr. štítky od prepravcu).
+- **Tlač** – náhľad presne toho, čo dostane tlačiareň, upozornenia, počet kópií,
+  číslovanie, rozsah záznamov z Excelu, priebeh odosielania. **Smer tlače** 0/90/180/270°.
 - **Bluetooth tlačiareň** – vyhľadanie a pripojenie, stav Pripojená/Offline, testovacia
   etiketa, rady keď sa tlačiareň nenájde.
-- **Nastavenia** – nepotlačiteľný pás hore, posun vodorovne/zvislo, sýtosť, posun na
-  ďalšiu etiketu (medzera / súvislý papier), spôsob posielania, veľkosť balíkov, záloha
-  etikiet do súboru (export/import).
+- **Ja** – moje etikety, počet vytlačených, **Pomocník**, nastavenia tlače (nepotlačiteľný
+  pás, posun, sýtosť, typ papiera), rozšírené nastavenia, záloha etikiet (export/import).
 
 Etikety sa ukladajú v prehliadači (IndexedDB). Aplikácia funguje aj offline.
 
@@ -90,5 +100,7 @@ menu prehliadača → **Pridať na plochu**.
 | `js/barcode.js` | kódovanie EAN-13/8, UPC-A, Code 128, Code 39 |
 | `js/printer.js` | Web Bluetooth, prevod na 1-bit raster, príkazy ESC/POS |
 | `js/templates.js` | šablóny a nové prvky |
+| `js/datasource.js` | načítanie Excelu (XLSX) a CSV bez knižníc, stĺpce a záznamy |
+| `js/icons.js` | knižnica ikon (vektorové cesty) |
 | `js/scan.js`, `js/importers.js` | skener kódov, import obrázka a PDF |
 | `vendor/` | [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (MIT), [pdf.js](https://github.com/mozilla/pdf.js) (Apache-2.0) |

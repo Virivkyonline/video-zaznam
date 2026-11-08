@@ -88,17 +88,15 @@ function loadPdfJs() {
   return pdfLoading;
 }
 
-/** Vykreslí zvolenú stranu PDF do obrázka (oreže biele okraje). */
-export async function pdfFileToDataURL(file) {
+/** Otvorí PDF súbor (pdf.js sa načíta až teraz). */
+export async function openPdf(file) {
   const lib = await loadPdfJs();
   const buf = await file.arrayBuffer();
-  const pdf = await lib.getDocument({ data: buf }).promise;
-  let pageNo = 1;
-  if (pdf.numPages > 1) {
-    const ans = await promptDialog(`PDF má ${pdf.numPages} strán. Ktorú stranu použiť?`, '1', { ok: 'Použiť', inputmode: 'numeric' });
-    if (ans == null) return null;
-    pageNo = Math.min(pdf.numPages, Math.max(1, parseInt(ans, 10) || 1));
-  }
+  return lib.getDocument({ data: buf }).promise;
+}
+
+/** Vykreslí stranu PDF do obrázka (oreže biele okraje). */
+export async function renderPdfPage(pdf, pageNo) {
   const page = await pdf.getPage(pageNo);
   const vp1 = page.getViewport({ scale: 1 });
   const scale = Math.min(4, 2000 / Math.max(vp1.width, vp1.height));
@@ -118,6 +116,20 @@ export async function pdfFileToDataURL(file) {
   const octx = out.getContext('2d');
   octx.imageSmoothingQuality = 'high';
   octx.drawImage(t, 0, 0, out.width, out.height);
-  pdf.destroy?.();
+  page.cleanup?.();
   return { src: out.toDataURL('image/png'), w: out.width, h: out.height };
+}
+
+/** Vykreslí zvolenú stranu PDF (pri viacstranovom sa opýta, ktorú). */
+export async function pdfFileToDataURL(file) {
+  const pdf = await openPdf(file);
+  let pageNo = 1;
+  if (pdf.numPages > 1) {
+    const ans = await promptDialog(`PDF má ${pdf.numPages} strán. Ktorú stranu použiť?`, '1', { ok: 'Použiť', inputmode: 'numeric' });
+    if (ans == null) return null;
+    pageNo = Math.min(pdf.numPages, Math.max(1, parseInt(ans, 10) || 1));
+  }
+  const res = await renderPdfPage(pdf, pageNo);
+  pdf.destroy?.();
+  return res;
 }

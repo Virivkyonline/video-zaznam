@@ -114,3 +114,18 @@ export function resetSettings() {
   localStorage.setItem(LS_SETTINGS, JSON.stringify(cache));
   return cache;
 }
+
+// ---------------------------------------------------------------- história tlače
+const LS_HISTORY = 'tlac-etikiet:historia';
+
+export function getHistory() {
+  try { return JSON.parse(localStorage.getItem(LS_HISTORY) || '[]'); } catch { return []; }
+}
+
+export function addHistory(entry) {
+  const list = getHistory();
+  list.unshift({ t: Date.now(), ...entry });
+  try { localStorage.setItem(LS_HISTORY, JSON.stringify(list.slice(0, 100))); } catch { /* plná pamäť */ }
+}
+
+export function clearHistory() { localStorage.removeItem(LS_HISTORY); }

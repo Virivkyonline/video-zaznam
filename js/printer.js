@@ -232,10 +232,47 @@ export async function sendBytes(bytes, o = {}) {
   }
 }
 
+// ---------------------------------------------------------------- smer tlače a tlačiteľná plocha
+/** Smer tlače etikety: 0, 90, 180 alebo 270 stupňov (otočenie návrhu na papieri). */
+export function labelDir(label) {
+  const d = Number(label.dir ?? (label.flip ? 180 : 0)) || 0;
+  return [0, 90, 180, 270].includes(d) ? d : 0;
+}
+
+/** Rozmer etikety na papieri (pri 90° a 270° sú šírka a výška vymenené). */
+export function paperSize(label) {
+  const d = labelDir(label);
+  return d === 90 || d === 270 ? { w: label.h, h: label.w } : { w: label.w, h: label.h };
+}
+
+/**
+ * Oblasti návrhu (v mm), ktoré sa nevytlačia: horný pás po posune etikety a okraje mimo hlavy.
+ * Vracia [{x, y, w, h, top}] v súradniciach návrhu.
+ */
+export function unprintableRects(label, cfg = getSettings()) {
+  const P = paperSize(label);
+  const offX = (HEAD_MM - P.w) / 2 + (cfg.offsetX || 0);
+  const offY = cfg.offsetY || 0;
+  const topCut = (cfg.topSkip || 0) - offY;
+  const rects = [];
+  if (topCut > 0) rects.push({ x: 0, y: 0, w: P.w, h: Math.min(P.h, topCut), top: true });
+  if (offY > 0) rects.push({ x: 0, y: P.h - offY, w: P.w, h: offY });
+  if (offX < 0) rects.push({ x: 0, y: 0, w: Math.min(P.w, -offX), h: P.h });
+  if (HEAD_MM - offX < P.w) rects.push({ x: HEAD_MM - offX, y: 0, w: P.w - (HEAD_MM - offX), h: P.h });
+  const d = labelDir(label);
+  const W = label.w, H = label.h;
+  return rects.map((r) => {
+    if (d === 180) return { ...r, x: W - r.x - r.w, y: H - r.y - r.h };
+    if (d === 90) return { ...r, x: r.y, y: H - r.x - r.w, w: r.h, h: r.w };
+    if (d === 270) return { ...r, x: W - r.y - r.h, y: r.x, w: r.h, h: r.w };
+    return r;
+  }).filter((r) => r.w > 0.01 && r.h > 0.01);
+}
+
 // ---------------------------------------------------------------- raster
 /**
  * Prevedie etiketu na 1-bitový obrázok so šírkou tlačovej hlavy.
- * Vracia { width, height, bytesPerRow, data, canvas, warnings }.
+ * Vracia { width, height, bytesPerRow, data, canvas }.
  */
 export async function rasterize(label, vars, cfg = getSettings()) {
   await preloadImages(label);
@@ -247,12 +284,14 @@ export async function rasterize(label, vars, cfg = getSettings()) {
   drawLabel(ctx, label, DPMM, { print: true, vars: vars || makeVars(label) });
   const px = ctx.getImageData(0, 0, Wd, Hd).data;
 
+  const dir = labelDir(label);
+  const swap = dir === 90 || dir === 270;
+  const Wp = swap ? Hd : Wd, Hp = swap ? Wd : Hd; // rozmer na papieri v bodoch
   const skipTop = Math.max(0, Math.round((cfg.topSkip || 0) * DPMM));
-  const outH = Math.max(8, Hd - skipTop);
+  const outH = Math.max(8, Hp - skipTop);
   const shiftY = Math.round((cfg.offsetY || 0) * DPMM); // + = nadol
-  const ox = Math.round((HEAD_DOTS - Wd) / 2 + (cfg.offsetX || 0) * DPMM);
+  const ox = Math.round((HEAD_DOTS - Wp) / 2 + (cfg.offsetX || 0) * DPMM);
   const thr = cfg.threshold ?? 128;
-  const flip = !!label.flip;
   const bpr = HEAD_DOTS / 8;
   const data = new Uint8Array(bpr * outH);
 
@@ -263,33 +302,32 @@ export async function rasterize(label, vars, cfg = getSettings()) {
   const od = oimg.data;
 
   for (let r = 0; r < outH; r++) {
-    let ly = r + skipTop - shiftY;
+    const ly = r + skipTop - shiftY;
     for (let X = 0; X < HEAD_DOTS; X++) {
-      let lx = X - ox;
+      const lx = X - ox;
+      const inside = lx >= 0 && lx < Wp && ly >= 0 && ly < Hp;
       let black = false;
-      if (lx >= 0 && lx < Wd && ly >= 0 && ly < Hd) {
-        const sx = flip ? Wd - 1 - lx : lx;
-        const sy = flip ? Hd - 1 - ly : ly;
+      if (inside) {
+        let sx, sy;
+        if (dir === 0) { sx = lx; sy = ly; }
+        else if (dir === 180) { sx = Wd - 1 - lx; sy = Hd - 1 - ly; }
+        else if (dir === 90) { sx = ly; sy = Hd - 1 - lx; }
+        else { sx = Wd - 1 - ly; sy = lx; }
         const p = (sy * Wd + sx) * 4;
-        const lum = 0.299 * px[p] + 0.587 * px[p + 1] + 0.114 * px[p + 2];
-        black = lum < thr;
+        black = 0.299 * px[p] + 0.587 * px[p + 1] + 0.114 * px[p + 2] < thr;
       }
       const q = (r * HEAD_DOTS + X) * 4;
       if (black) {
         data[r * bpr + (X >> 3)] |= 0x80 >> (X & 7);
         od[q] = od[q + 1] = od[q + 2] = 0;
       } else {
-        const inside = lx >= 0 && lx < Wd && ly >= 0 && ly < Hd;
         od[q] = od[q + 1] = od[q + 2] = inside ? 255 : 236;
       }
       od[q + 3] = 255;
     }
   }
   octx.putImageData(oimg, 0, 0);
-
-  const warnings = [];
-  if (Wd > HEAD_DOTS) warnings.push(`Etiketa je širšia ako tlačová hlava (${HEAD_MM} mm) – okraje sa nevytlačia.`);
-  return { width: HEAD_DOTS, height: outH, bytesPerRow: bpr, data, canvas: out, warnings };
+  return { width: HEAD_DOTS, height: outH, bytesPerRow: bpr, data, canvas: out };
 }
 
 // ---------------------------------------------------------------- ESC/POS
@@ -362,28 +400,40 @@ export function labelCommands(raster, cfg = getSettings()) {
 export const INIT = new Uint8Array([ESC, 0x40]);
 
 /**
- * Vytlačí etiketu v zadanom počte kópií.
- * @param {object} label
- * @param {{copies?:number, serialStart?:number, onProgress?:Function, signal?:object}} o
+ * Pošle do tlačiarne `count` etikiet; `make(i)` vráti { label, vars } pre i-tu etiketu.
  */
-export async function printLabel(label, o = {}) {
+export async function printJobs(count, make, o = {}) {
   const cfg = getSettings();
-  const copies = Math.max(1, o.copies || 1);
   if (state.status !== 'connected') {
     const ok = await reconnect({ quiet: true });
     if (!ok) throw new Error('Tlačiareň nie je pripojená.');
   }
   await sendBytes(INIT, { signal: o.signal });
-  for (let i = 0; i < copies; i++) {
-    const vars = makeVars(label, (o.serialStart ?? 1) + i * (label.serial?.step || 1));
-    const r = await rasterize(label, vars, cfg);
-    const bytes = labelCommands(r, cfg);
-    await sendBytes(bytes, {
+  for (let i = 0; i < count; i++) {
+    if (o.signal?.cancelled) throw new Error('Tlač bola zrušená.');
+    const job = await make(i);
+    const r = await rasterize(job.label, job.vars, cfg);
+    await sendBytes(labelCommands(r, cfg), {
       signal: o.signal,
-      onProgress: (sent, total) => o.onProgress?.(i, copies, sent / total),
+      onProgress: (sent, total) => o.onProgress?.(i, count, sent / total),
     });
-    if (i < copies - 1 && cfg.copyPause) await sleep(cfg.copyPause);
+    if (i < count - 1 && cfg.copyPause) await sleep(cfg.copyPause);
   }
+}
+
+/**
+ * Vytlačí etiketu: každý riadok z Excelu (od–do) × počet kópií; poradové číslo sa zvyšuje.
+ * @param {{copies?:number, serialStart?:number, rowFrom?:number, rowTo?:number, onProgress?:Function, signal?:object}} o
+ */
+export function printLabel(label, o = {}) {
+  const copies = Math.max(1, o.copies || 1);
+  const rowFrom = o.rowFrom ?? 0;
+  const rows = o.rowTo != null ? Math.max(1, o.rowTo - rowFrom + 1) : 1;
+  const step = label.serial?.step || 1;
+  return printJobs(rows * copies, (i) => {
+    const row = rowFrom + Math.floor(i / copies);
+    return { label, vars: makeVars(label, (o.serialStart ?? 1) + i * step, o.rowTo != null ? row : undefined) };
+  }, o);
 }
 
 /** Testovacia etiketa s rámčekom a mm pravítkom (na zistenie posunu a nepotlačiteľného okraja). */

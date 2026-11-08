@@ -8,7 +8,7 @@ export const SIZE_PRESETS = [
 
 export function newLabel(w = 50, h = 30, name = 'Nová etiketa') {
   const now = Date.now();
-  return { id: uid(), name, w, h, items: [], flip: false, serial: { start: 1, step: 1, digits: 0, next: 1 }, created: now, updated: now };
+  return { id: uid(), name, w, h, items: [], dir: 0, serial: { start: 1, step: 1, digits: 0, next: 1 }, created: now, updated: now };
 }
 
 /** Predvolené vlastnosti nových prvkov (rozmery v mm). */
@@ -34,6 +34,18 @@ export function newItem(type, label, extra = {}) {
       return { ...base, thick: 0.4, dash: false, x: 2, y: H / 2 - 0.75, w: W - 4, h: 1.5, ...extra };
     case 'shape':
       return { ...base, shape: 'rect', thick: 0.5, fill: false, radius: 1, x: 1, y: top, w: W - 2, h: H - top - 1, ...extra };
+    case 'table': {
+      const w = Math.min(W - 3, 46), h = Math.min(H - top - 1, 15);
+      return {
+        ...base, rows: 3, cols: 2, colW: [1, 1.4], size: 8, font: 'sans', border: 0.3, headBold: false, firstColBold: true, align: 'left',
+        cells: [['Názov', 'Hodnota'], ['Rozmer', '200 × 200 cm'], ['Hmotnosť', '25 kg']],
+        x: (W - w) / 2, y: top, w, h, ...extra,
+      };
+    }
+    case 'icon': {
+      const side = Math.min(10, H - top - 1, W - 2);
+      return { ...base, icon: 'sklo', weight: 2, x: 2, y: top + (H - top - side) / 2, w: side, h: side, ...extra };
+    }
     default:
       return { ...base, x: 2, y: 2, w: 10, h: 10, ...extra };
   }
@@ -42,6 +54,7 @@ export function newItem(type, label, extra = {}) {
 const T = (type, props) => ({ id: uid(), type, rot: 0, ...props });
 const txt = (text, x, y, w, h, size, more = {}) => T('text', { text, x, y, w, h, size, font: 'sans', bold: false, italic: false, underline: false, align: 'left', valign: 'middle', wrap: true, fit: false, invert: false, ...more });
 const bar = (format, data, x, y, w, h, more = {}) => T('barcode', { format, data, x, y, w, h, showText: true, textSize: 8, ...more });
+const ico = (icon, x, y, side, more = {}) => T('icon', { icon, x, y, w: side, h: side, weight: 2, ...more });
 
 export const TEMPLATES = [
   {
@@ -111,6 +124,33 @@ export const TEMPLATES = [
     items: () => [
       T('shape', { shape: 'rect', x: 1.5, y: 4.3, w: 47, h: 19.7, thick: 0.6, fill: false, radius: 2 }),
       txt('NÁPIS', 3, 6.5, 44, 15.3, 22, { bold: true, align: 'center', fit: true }),
+    ],
+  },
+  {
+    id: 'krehke', name: 'Krehké – zásielka', cat: 'Doprava', w: 50, h: 30,
+    items: () => [
+      txt('KREHKÉ', 1.5, 4.3, 47, 8, 20, { bold: true, align: 'center', fit: true }),
+      ico('sklo', 4, 13.5, 13), ico('hore', 18.5, 13.5, 13), ico('sucho', 33, 13.5, 13),
+    ],
+  },
+  {
+    id: 'parametre', name: 'Tabuľka parametrov', cat: 'Sklad', w: 50, h: 30,
+    items: () => [
+      txt('Vírivka Relax 200', 1.5, 4.3, 47, 5, 11, { bold: true, fit: true }),
+      T('table', {
+        rows: 3, cols: 2, colW: [1, 1.4], size: 8, font: 'sans', border: 0.3, headBold: false, firstColBold: true, align: 'left',
+        cells: [['Rozmer', '200 × 200 cm'], ['Hmotnosť', '250 kg'], ['Kód', 'VR-200']],
+        x: 1.5, y: 10, w: 47, h: 18.5,
+      }),
+    ],
+  },
+  {
+    id: 'kontakt', name: 'Kontakt s ikonami', cat: 'Adresy', w: 50, h: 30,
+    items: () => [
+      txt('Firma s.r.o.', 2, 4.3, 46, 5.2, 11, { bold: true, fit: true }),
+      ico('telefon', 2, 10.6, 4.4), txt('+421 900 123 456', 7.5, 10.6, 40.5, 4.4, 8.5),
+      ico('email', 2, 16, 4.4), txt('info@firma.sk', 7.5, 16, 40.5, 4.4, 8.5),
+      ico('web', 2, 21.4, 4.4), txt('www.firma.sk', 7.5, 21.4, 40.5, 4.4, 8.5),
     ],
   },
   {

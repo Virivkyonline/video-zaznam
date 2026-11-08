@@ -5,15 +5,17 @@ import {
   clamp, fmt, debounce, pickFile,
 } from './ui.js';
 import { drawLabel, localSize, measureText, measureTextHeight, FONTS, setImageReadyCallback, makeVars, applyVars, barcodeModuleDots } from './render.js';
-import { FORMATS, encodeBarcode, guessFormat, gtinCheck } from './barcode.js';
+import { FORMATS, encodeBarcode, guessFormat } from './barcode.js';
 import { newItem, SIZE_PRESETS } from './templates.js';
 import { getSettings } from './store.js';
-import { HEAD_MM } from './printer.js';
+import { unprintableRects, labelDir } from './printer.js';
+import { ICONS, ICON_CATS, iconSvg } from './icons.js';
+import { readDataFile, dataColumns, dataRecords } from './datasource.js';
 import { scanCode } from './scan.js';
 import { imageFileToDataURL, pdfFileToDataURL } from './importers.js';
 
-const TYPE_NAMES = { text: 'Text', barcode: 'Čiarový kód', qr: 'QR kód', image: 'Obrázok', line: 'Čiara', shape: 'Tvar' };
-const TYPE_ICONS = { text: 'text', barcode: 'barcode', qr: 'qr', image: 'image', line: 'line', shape: 'shape' };
+const TYPE_NAMES = { text: 'Text', barcode: 'Čiarový kód', qr: 'QR kód', image: 'Obrázok', line: 'Čiara', shape: 'Tvar', table: 'Tabuľka', icon: 'Ikona' };
+const TYPE_ICONS = { text: 'text', barcode: 'barcode', qr: 'qr', image: 'image', line: 'line', shape: 'shape', table: 'table', icon: 'star' };
 const MARGIN = 26; // px okolo etikety na plátne
 const HANDLE = 9;
 
@@ -42,7 +44,10 @@ const panel = () => $('#ed-panel');
 export const editorLabel = () => E.label;
 
 // snímka pre históriu (bez časových údajov, ktoré mení ukladanie)
-const snapshot = () => JSON.stringify(E.label, (k, v) => (k === 'updated' || k === 'printed' ? undefined : v));
+// (údaje z Excelu sa do histórie neukladajú – môžu byť veľké)
+const snapshot = () => JSON.stringify(E.label, function (k, v) {
+  return this === E.label && (k === 'updated' || k === 'printed' || k === 'data') ? undefined : v;
+});
 
 const persist = debounce(() => { if (E.label && E.save) { E.label.updated = Date.now(); E.save(E.label); } }, 350);
 
@@ -59,6 +64,7 @@ export function openEditor(label, { save, print, openPrinter }) {
   $('#ed-size').onclick = () => labelSettings();
   $('#ed-print').onclick = () => E.print?.(E.label);
   $('#ed-printer').onclick = () => openPrinter?.();
+  $('#ed-data').onclick = () => dataSheet();
   $('#ed-undo').onclick = undo;
   $('#ed-redo').onclick = redo;
   if (!$('#ed-undo').firstChild) {
@@ -99,8 +105,18 @@ function updateHeader() {
   const l = E.label;
   $('#ed-title').textContent = l.name || 'Etiketa';
   $('#ed-size').textContent = `${fmt(l.w)} × ${fmt(l.h)} mm`;
-  const cfg = getSettings();
-  $('#ed-hint').textContent = cfg.topSkip > 0 || l.w > HEAD_MM ? 'šrafované = netlačí sa' : '';
+  const dir = labelDir(l);
+  const hints = [];
+  if (dir) hints.push(`tlač otočená o ${dir}°`);
+  if (unprintableRects(l).length) hints.push('šrafované = netlačí sa');
+  $('#ed-hint').textContent = hints.join(' · ');
+  const dc = $('#ed-data');
+  if (dc) {
+    const n = dataRecords(l.data).length;
+    dc.hidden = !l.data;
+    dc.innerHTML = '';
+    if (l.data) dc.append(icon('sheet', 16), `${(l.data.preview || 0) + 1}/${n}`);
+  }
   $('#ed-undo').disabled = E.hi <= 0;
   $('#ed-redo').disabled = E.hi >= E.hist.length - 1;
 }
@@ -121,8 +137,10 @@ const commitSoon = debounce(commit, 500);
 function restore(i) {
   E.hi = i;
   const l = JSON.parse(E.hist[i]);
+  const keep = { data: E.label.data, created: E.label.created, printed: E.label.printed };
   Object.keys(E.label).forEach((k) => delete E.label[k]);
   Object.assign(E.label, l);
+  for (const [k, v] of Object.entries(keep)) if (v !== undefined) E.label[k] = v;
   if (!E.label.items.find((it) => it.id === E.selId)) E.selId = null;
   persist();
   updateHeader();
@@ -181,6 +199,7 @@ function hatch(ctx, x, y, w, h, z, text) {
 function selected() { return E.label?.items.find((it) => it.id === E.selId) || null; }
 
 function handlesFor(it) {
+  if (it.locked) return [];
   const z = E.zoom;
   const x = it.x * z, y = it.y * z, w = it.w * z, hh = it.h * z;
   const hs = [{ k: 'br', x: x + w, y: y + hh }];
@@ -220,15 +239,7 @@ function draw() {
   drawLabel(ctx, l, z, { background: false, vars: makeVars(l) });
 
   // nepotlačiteľné oblasti
-  const cfg = getSettings();
-  const offX = (HEAD_MM - l.w) / 2 + (cfg.offsetX || 0);
-  const leftCut = -offX, rightEdge = HEAD_MM - offX;
-  const topCut = (cfg.topSkip || 0) - (cfg.offsetY || 0);
-  const bottomEdge = l.h - (cfg.offsetY || 0);
-  hatch(ctx, 0, 0, l.w, topCut, z, 'netlačí sa');
-  hatch(ctx, 0, bottomEdge, l.w, l.h - bottomEdge, z, '');
-  hatch(ctx, 0, Math.max(0, topCut), leftCut, l.h, z, '');
-  hatch(ctx, rightEdge, Math.max(0, topCut), l.w - rightEdge, l.h, z, '');
+  for (const rc of unprintableRects(l)) hatch(ctx, rc.x, rc.y, rc.w, rc.h, z, rc.top ? 'netlačí sa' : '');
   ctx.restore();
 
   // obrysy prvkov
@@ -261,9 +272,11 @@ function draw() {
   const it = selected();
   if (it) {
     ctx.save();
-    ctx.strokeStyle = '#2f6fec';
+    ctx.strokeStyle = it.locked ? '#8a93a3' : '#2f6fec';
     ctx.lineWidth = 1.5;
+    if (it.locked) ctx.setLineDash([5, 3]);
     ctx.strokeRect(it.x * z, it.y * z, it.w * z, it.h * z);
+    ctx.setLineDash([]);
     for (const hd of handlesFor(it)) {
       ctx.beginPath();
       ctx.arc(hd.x, hd.y, hd.k === 'br' ? HANDLE : HANDLE - 2, 0, Math.PI * 2);
@@ -345,7 +358,7 @@ function bindPointer() {
       if (hit) {
         const wasSel = hit.id === E.selId;
         if (!wasSel) selectItem(hit.id);
-        E.drag = { mode: 'move', id: hit.id, start: { ...hit }, p0: p, moved: false, wasSel };
+        E.drag = { mode: hit.locked ? 'locked' : 'move', id: hit.id, start: { ...hit }, p0: p, moved: false, wasSel };
       } else {
         if (E.selId) selectItem(null);
         E.drag = null;
@@ -359,6 +372,7 @@ function bindPointer() {
     if (!d) return;
     const p = toMm(e);
     if (!d.moved && Math.hypot(p.px - d.p0.px, p.py - d.p0.py) < 4) return;
+    if (d.mode === 'locked') { if (!d.warned) { d.warned = true; toast('Prvok je zamknutý – odomknite ho v paneli.'); } return; }
     d.moved = true;
     const it = E.label.items.find((x) => x.id === d.id);
     if (!it) return;
@@ -405,6 +419,7 @@ function onKey(e) {
   const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
   if (moves[e.key]) {
     e.preventDefault();
+    if (it.locked) return;
     it.x = r1(it.x + moves[e.key][0]);
     it.y = r1(it.y + moves[e.key][1]);
     syncPosFields(); draw(); commitSoon();
@@ -423,7 +438,7 @@ function selectItem(id) {
 
 function update(it, patch, { soon = true } = {}) {
   Object.assign(it, patch);
-  if (it.type === 'text' && ('text' in patch || 'size' in patch || 'font' in patch || 'bold' in patch || 'wrap' in patch)) autoGrow(it);
+  if (it.type === 'text' && ['text', 'size', 'font', 'bold', 'italic', 'wrap', 'ls', 'lh', 'fit'].some((k) => k in patch)) autoGrow(it);
   draw();
   if (soon) commitSoon(); else commit();
 }
@@ -529,6 +544,16 @@ function syncPosFields() {
 // ---------------------------------------------------------------- pridávanie prvkov
 async function addOfType(type) {
   const l = E.label;
+  if (type === 'excel') { dataSheet(); return; }
+  if (type === 'icon') {
+    const id = await pickIcon();
+    if (!id) return;
+    const it = newItem('icon', l, { icon: id });
+    const n = l.items.filter((x) => x.type === 'icon').length;
+    it.x = r1(Math.min(l.w - it.w - 0.5, it.x + n * (it.w + 1)));
+    addItem(it);
+    return;
+  }
   if (type === 'image') {
     const file = await pickFile('image/*,application/pdf');
     if (!file) return;
@@ -553,7 +578,7 @@ async function addOfType(type) {
   }
   // ďalší prvok trochu nižšie, aby neprekrýval predchádzajúci
   const n = l.items.filter((x) => x.type === it.type).length;
-  if (n && it.type !== 'shape') it.y = r1(Math.min(l.h - it.h, it.y + n * 3));
+  if (n && it.type !== 'shape' && it.type !== 'table') it.y = r1(Math.min(l.h - it.h, it.y + n * 3));
   addItem(it);
   if (it.type === 'text') setTimeout(() => { const ta = panel().querySelector('textarea'); ta?.focus(); ta?.select(); }, 60);
 }
@@ -584,8 +609,11 @@ function renderPanel() {
         add('barcode', 'Čiarový kód', 'barcode'),
         add('qr', 'QR kód', 'qr'),
         add('image', 'Obrázok', 'image'),
-        add('date', 'Dátum', 'calendar'),
+        add('table', 'Tabuľka', 'table'),
+        add('icon', 'Ikona', 'star'),
+        add('date', 'Dátum a čas', 'calendar'),
         add('serial', 'Číslovanie', 'hash'),
+        add('excel', 'Excel', 'sheet'),
         add('line', 'Čiara', 'line'),
         add('shape', 'Rámček', 'shape'),
       ),
@@ -599,6 +627,11 @@ function renderPanel() {
   const head = h('div', { class: 'props-head' },
     h('div', { class: 'props-title' }, icon(TYPE_ICONS[it.type], 20), h('span', null, TYPE_NAMES[it.type] || 'Prvok')),
     h('div', { class: 'props-actions' },
+      h('button', {
+        class: 'icon-btn' + (it.locked ? ' accent' : ''), type: 'button', title: it.locked ? 'Odomknúť' : 'Zamknúť', 'aria-label': it.locked ? 'Odomknúť' : 'Zamknúť',
+        onclick: () => { it.locked = !it.locked; commit(); renderPanel(); draw(); toast(it.locked ? 'Prvok je zamknutý' : 'Prvok je odomknutý'); },
+        html: svgIcon(it.locked ? 'lock' : 'unlock', 20),
+      }),
       h('button', { class: 'icon-btn', type: 'button', title: 'Kopírovať', 'aria-label': 'Kopírovať', onclick: duplicateSelected, html: svgIcon('copy', 20) }),
       h('button', { class: 'icon-btn', type: 'button', title: 'Dopredu', 'aria-label': 'Dopredu', onclick: () => moveLayer(1), html: svgIcon('front', 20) }),
       h('button', { class: 'icon-btn', type: 'button', title: 'Dozadu', 'aria-label': 'Dozadu', onclick: () => moveLayer(-1), html: svgIcon('backward', 20) }),
@@ -608,7 +641,7 @@ function renderPanel() {
   const body = h('div', { class: 'props-body' });
   p.append(head, body);
 
-  const builders = { text: textProps, barcode: barcodeProps, qr: qrProps, image: imageProps, line: lineProps, shape: shapeProps };
+  const builders = { text: textProps, barcode: barcodeProps, qr: qrProps, image: imageProps, line: lineProps, shape: shapeProps, table: tableProps, icon: iconProps };
   builders[it.type]?.(it, body);
   body.append(positionProps(it));
 }
@@ -627,7 +660,8 @@ function textProps(it, body) {
   const chip = (label, str) => h('button', { class: 'chip chip-sm', type: 'button', onclick: () => insertAtCursor(ta, str) }, label);
   body.append(
     field('Text', ta),
-    h('div', { class: 'chips' }, chip('+ dnešný dátum', '{datum}'), chip('+ dátum o 7 dní', '{datum+7}'), chip('+ čas', '{cas}'), chip('+ poradové číslo', '{cislo}')),
+    columnChips((col) => insertAtCursor(ta, col)),
+    h('div', { class: 'chips' }, chip('+ dátum', '{datum}'), chip('+ o 7 dní', '{datum+7}'), chip('+ čas', '{cas}'), chip('+ deň', '{den}'), chip('+ mesiac', '{mesiac}'), chip('+ rok', '{rok}'), chip('+ poradové č.', '{cislo}')),
     h('div', { class: 'grid2' },
       field('Písmo', select(FONTS.map((f) => ({ value: f.id, label: f.name })), it.font || 'sans', (v) => update(it, { font: v }))),
       field('Veľkosť (bodov)', stepper(it.size || 10, { step: 0.5, min: 3, max: 150 }, (v) => update(it, { size: v }))),
@@ -650,9 +684,13 @@ function textProps(it, body) {
         { value: 'bottom', icon: 'vBot', title: 'Dole' },
       ], it.valign || 'middle', (v) => update(it, { valign: v }))),
     ),
+    h('div', { class: 'grid2' },
+      field('Riadkovanie', stepper(it.lh || 1.15, { step: 0.05, min: 0.7, max: 3, dec: 2 }, (v) => update(it, { lh: v }))),
+      field('Rozostup písmen', stepper(it.ls || 0, { step: 0.1, min: -0.5, max: 5, suffix: 'mm' }, (v) => update(it, { ls: v }))),
+    ),
     row('Zalamovať riadky', toggle(it.wrap !== false, (v) => update(it, { wrap: v }))),
     row('Zmenšiť písmo, aby sa text zmestil', toggle(!!it.fit, (v) => update(it, { fit: v }))),
-    h('p', { class: 'field-hint' }, 'Premenné: {datum} = dnešný dátum, {datum+7} = o 7 dní, {cas} = čas, {cislo} = poradové číslo (pri tlači viacerých kópií sa zvyšuje).'),
+    h('p', { class: 'field-hint' }, 'Premenné: {datum} = dnešný dátum, {datum+7} = o 7 dní, {cas} = čas, {den} = deň v týždni, {cislo} = poradové číslo (pri tlači viacerých kópií sa zvyšuje). Stĺpce z Excelu: {Názov stĺpca}.'),
   );
 }
 
@@ -695,6 +733,7 @@ function barcodeProps(it, body) {
   body.append(
     field('Typ kódu', fmtSel),
     field('Obsah kódu', h('div', { class: 'input-row' }, inp, scanBtn), msg),
+    columnChips((col) => { inp.value = col; update(it, { data: col }, { soon: false }); validate(); }, 'Obsah zo stĺpca:'),
     row('Zobraziť číslo pod kódom', toggle(it.showText !== false, (v) => { update(it, { showText: v }); validate(); })),
     field('Veľkosť čísla (bodov)', stepper(it.textSize || 8, { step: 0.5, min: 4, max: 30 }, (v) => update(it, { textSize: v }))),
   );
@@ -720,6 +759,7 @@ function qrProps(it, body) {
   });
   body.append(
     field('Obsah', h('div', { class: 'input-row' }, ta, scanBtn), msg),
+    columnChips((col) => insertAtCursor(ta, col)),
     field('Odolnosť voči poškodeniu', segmented([
       { value: 'L', label: 'L 7 %' }, { value: 'M', label: 'M 15 %' }, { value: 'Q', label: 'Q 25 %' }, { value: 'H', label: 'H 30 %' },
     ], it.ec || 'M', (v) => update(it, { ec: v }, { soon: false }))),
@@ -780,11 +820,18 @@ function positionProps(it) {
     w: stepper(it.w, { step: 0.5, min: 0.5, max: 400, suffix: 'mm' }, (v) => update(it, it.type === 'qr' ? { w: v, h: v } : it.type === 'text' ? { w: v, autoW: false } : { w: v })),
     h: stepper(it.h, { step: 0.5, min: 0.5, max: 400, suffix: 'mm' }, (v) => update(it, it.type === 'qr' ? { w: v, h: v } : { h: v })),
   };
-  const center = (axis) => {
-    if (axis === 'x') it.x = r1((E.label.w - it.w) / 2);
-    else it.y = r1((E.label.h - it.h) / 2);
+  const align = (k) => {
+    const b = printableBox();
+    const m = 0.5;
+    if (k === 'cx') it.x = r1((E.label.w - it.w) / 2);
+    else if (k === 'cy') it.y = r1(b.y + (b.y2 - b.y - it.h) / 2);
+    else if (k === 'l') it.x = r1(b.x + m);
+    else if (k === 'r') it.x = r1(b.x2 - it.w - m);
+    else if (k === 't') it.y = r1(b.y + m);
+    else if (k === 'b') it.y = r1(b.y2 - it.h - m);
     syncPosFields(); draw(); commit();
   };
+  const ab = (k, ic, t) => h('button', { type: 'button', title: t, 'aria-label': t, onclick: () => align(k) }, icon(ic, 20));
   return h('div', { class: 'props-section' },
     h('div', { class: 'props-sub' }, 'Poloha a veľkosť'),
     h('div', { class: 'grid2' },
@@ -794,12 +841,238 @@ function positionProps(it) {
       field('Výška', E.posFields.h),
     ),
     it.type !== 'line' ? field('Otočenie', segmented([0, 90, 180, 270].map((r) => ({ value: r, label: r + '°' })), it.rot || 0, (v) => setRotation(it, Number(v)))) : null,
-    h('div', { class: 'btn-row' },
-      h('button', { class: 'btn', type: 'button', onclick: () => center('x') }, icon('centerH', 20), h('span', null, 'Na stred ↔')),
-      h('button', { class: 'btn', type: 'button', onclick: () => center('y') }, icon('centerV', 20), h('span', null, 'Na stred ↕')),
-    ),
+    field('Zarovnať na etikete', h('div', { class: 'seg seg-multi seg-tools' },
+      ab('l', 'edgeL', 'K ľavému okraju'), ab('cx', 'centerH', 'Na stred vodorovne'), ab('r', 'edgeR', 'K pravému okraju'),
+      ab('t', 'edgeT', 'K hornému okraju'), ab('cy', 'centerV', 'Na stred zvisle'), ab('b', 'edgeB', 'K dolnému okraju'))),
   );
 }
+
+/** Tlačiteľná časť etikety (bez šrafovaných okrajov) v mm. */
+function printableBox() {
+  const l = E.label;
+  const b = { x: 0, y: 0, x2: l.w, y2: l.h };
+  for (const r of unprintableRects(l)) {
+    if (r.w >= l.w - 0.01) { if (r.y <= 0.01) b.y = Math.max(b.y, r.y + r.h); else b.y2 = Math.min(b.y2, r.y); }
+    else if (r.h >= l.h - 0.01) { if (r.x <= 0.01) b.x = Math.max(b.x, r.x + r.w); else b.x2 = Math.min(b.x2, r.x); }
+  }
+  return b;
+}
+
+// ---------------------------------------------------------------- stĺpce z Excelu
+function columnChips(onPick, label = 'Stĺpce z Excelu:') {
+  const cols = dataColumns(E.label?.data);
+  if (!cols.length) return null;
+  return h('div', { class: 'chips data-chips' }, h('span', { class: 'chips-label' }, icon('sheet', 16), label),
+    cols.map((c) => h('button', { class: 'chip chip-sm chip-data', type: 'button', onclick: () => onPick(`{${c}}`) }, c)));
+}
+
+// ---------------------------------------------------------------- tabuľka
+function resizeCells(it) {
+  const rows = it.rows, cols = it.cols;
+  const cells = it.cells || [];
+  it.cells = Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => cells[r]?.[c] ?? ''));
+  const cw = it.colW || [];
+  it.colW = Array.from({ length: cols }, (_, c) => cw[c] || 1);
+}
+
+function tableProps(it, body) {
+  resizeCells(it);
+  const grid = h('div', { class: 'cell-grid' });
+  let focused = null;
+  const renderGrid = () => {
+    grid.innerHTML = '';
+    grid.style.gridTemplateColumns = `repeat(${it.cols}, minmax(90px, 1fr))`;
+    for (let r = 0; r < it.rows; r++) {
+      for (let c = 0; c < it.cols; c++) {
+        const inp = h('input', { class: 'input cell-input', type: 'text', value: it.cells[r][c], placeholder: `${r + 1}/${c + 1}` });
+        inp.addEventListener('focus', () => { focused = inp; });
+        inp.addEventListener('input', () => { it.cells[r][c] = inp.value; draw(); commitSoon(); });
+        grid.append(inp);
+      }
+    }
+  };
+  renderGrid();
+  const colsInput = h('input', { class: 'input', type: 'text', value: it.colW.map((v) => String(Math.round(v * 100) / 100).replace('.', ',')).join(' : '), inputmode: 'decimal' });
+  colsInput.addEventListener('change', () => {
+    const parts = colsInput.value.split(/[:;/ ]+/).map((v) => parseFloat(v.replace(',', '.'))).filter((v) => v > 0);
+    it.colW = Array.from({ length: it.cols }, (_, c) => parts[c] || 1);
+    draw(); commit();
+  });
+  body.append(
+    h('div', { class: 'grid2' },
+      field('Riadky', stepper(it.rows, { step: 1, min: 1, max: 20, dec: 0 }, (v) => { it.rows = v; resizeCells(it); renderGrid(); draw(); commit(); })),
+      field('Stĺpce', stepper(it.cols, { step: 1, min: 1, max: 8, dec: 0 }, (v) => { it.cols = v; resizeCells(it); colsInput.value = it.colW.join(' : '); renderGrid(); draw(); commit(); })),
+    ),
+    field('Obsah buniek', h('div', { class: 'cell-scroll' }, grid)),
+    columnChips((col) => {
+      if (!focused) { toast('Najprv ťuknite do bunky'); return; }
+      focused.value += col; focused.dispatchEvent(new Event('input')); focused.focus();
+    }),
+    h('div', { class: 'grid2' },
+      field('Veľkosť písma', stepper(it.size || 8, { step: 0.5, min: 3, max: 60 }, (v) => update(it, { size: v }))),
+      field('Hrúbka čiar', stepper(it.border ?? 0.3, { step: 0.1, min: 0, max: 3, suffix: 'mm' }, (v) => update(it, { border: v }))),
+    ),
+    field('Pomer šírok stĺpcov', colsInput, 'Napr. 1 : 2 = druhý stĺpec je dvakrát širší.'),
+    field('Zarovnanie textu', segmented([
+      { value: 'left', icon: 'alignL', title: 'Vľavo' }, { value: 'center', icon: 'alignC', title: 'Na stred' }, { value: 'right', icon: 'alignR', title: 'Vpravo' },
+    ], it.align || 'left', (v) => update(it, { align: v }, { soon: false }))),
+    field('Písmo', select(FONTS.map((f) => ({ value: f.id, label: f.name })), it.font || 'sans', (v) => update(it, { font: v }, { soon: false }))),
+    row('Tučný prvý riadok (hlavička)', toggle(!!it.headBold, (v) => update(it, { headBold: v }, { soon: false }))),
+    row('Tučný prvý stĺpec', toggle(!!it.firstColBold, (v) => update(it, { firstColBold: v }, { soon: false }))),
+  );
+}
+
+// ---------------------------------------------------------------- ikony
+function pickIcon(current) {
+  return new Promise((resolve) => {
+    let result = null;
+    let s;
+    let cat = ICONS.find((i) => i.id === current)?.cat || ICON_CATS[0];
+    const grid = h('div', { class: 'icon-grid' });
+    const tabs = h('div', { class: 'chips' });
+    const render = () => {
+      tabs.innerHTML = '';
+      ICON_CATS.forEach((c) => tabs.append(h('button', { class: 'chip' + (c === cat ? ' on' : ''), type: 'button', onclick: () => { cat = c; render(); } }, c)));
+      grid.innerHTML = '';
+      ICONS.filter((i) => i.cat === cat).forEach((i) => {
+        grid.append(h('button', {
+          class: 'icon-pick' + (i.id === current ? ' on' : ''), type: 'button', title: i.name,
+          onclick: () => { result = i.id; s.close(); },
+        }, h('span', { html: iconSvg(i.id, 34) }), h('span', { class: 'icon-name' }, i.name)));
+      });
+    };
+    render();
+    s = openSheet({ title: 'Vyberte ikonu', body: h('div', null, tabs, grid), onClose: () => resolve(result) });
+  });
+}
+
+function iconProps(it, body) {
+  const prev = h('span', { class: 'icon-prev', html: iconSvg(it.icon, 40) });
+  const change = h('button', { class: 'btn', type: 'button' }, prev, h('span', null, 'Zmeniť ikonu'));
+  change.addEventListener('click', async () => {
+    const id = await pickIcon(it.icon);
+    if (id) { update(it, { icon: id }, { soon: false }); prev.innerHTML = iconSvg(id, 40); }
+  });
+  body.append(
+    h('div', { class: 'btn-row' }, change),
+    field('Hrúbka čiar', stepper(it.weight ?? 2, { step: 0.25, min: 0.75, max: 4, dec: 2 }, (v) => update(it, { weight: v }))),
+  );
+}
+
+// ---------------------------------------------------------------- údaje z Excelu
+async function loadDataFile(sheetIndex = 0, file = null) {
+  file = file || await pickFile('.xlsx,.csv,.txt,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv');
+  if (!file) return null;
+  try {
+    toast('Načítavam tabuľku…', 8000);
+    const res = await readDataFile(file, sheetIndex);
+    toast(`Načítaných ${res.rows.length} riadkov`);
+    return { ...res, file };
+  } catch (e) {
+    toast(e.message || 'Súbor sa nepodarilo načítať', 5000);
+    return null;
+  }
+}
+
+function previewTable(data, max = 6) {
+  const cols = dataColumns(data);
+  const recs = dataRecords(data).slice(0, max);
+  return h('div', { class: 'data-preview' }, h('table', null,
+    h('thead', null, h('tr', null, h('th', null, '#'), cols.map((c) => h('th', null, c)))),
+    h('tbody', null, recs.map((r, i) => h('tr', null, h('td', { class: 'muted' }, String(i + 1)), cols.map((_, c) => h('td', null, r[c] ?? '')))))));
+}
+
+/** Panel so zdrojom údajov (Excel/CSV) pre hromadnú tlač. */
+async function dataSheet() {
+  const l = E.label;
+  if (!l.data) {
+    const res = await loadDataFile();
+    if (!res) return;
+    confirmData(res);
+    return;
+  }
+  const d = l.data;
+  const n = dataRecords(d).length;
+  let s;
+  const addCol = (c) => {
+    const it = newItem('text', l, { text: `{${c}}`, size: 10 });
+    const m = measureText(it, makeVars(l));
+    it.w = r1(Math.min(l.w - it.x - 0.5, Math.max(8, m.w)));
+    it.h = r1(m.h);
+    const k = l.items.filter((x) => x.type === 'text').length;
+    it.y = r1(Math.min(l.h - it.h, it.y + k * 4));
+    s.close();
+    addItem(it);
+  };
+  const body = h('div', null,
+    h('div', { class: 'data-head' }, icon('sheet', 22), h('div', null, h('b', null, d.name), h('div', { class: 'muted small' }, `${n} záznamov${d.sheet ? ' · hárok ' + d.sheet : ''}`))),
+    field('Náhľad na etikete – záznam č.', stepper((d.preview || 0) + 1, { step: 1, min: 1, max: Math.max(1, n), dec: 0 }, (v) => { d.preview = v - 1; persist(); updateHeader(); draw(); })),
+    field('Pridať stĺpec na etiketu ako text', h('div', { class: 'chips' }, dataColumns(d).map((c) => h('button', { class: 'chip chip-data', type: 'button', onclick: () => addCol(c) }, '+ ' + c)))),
+    h('p', { class: 'field-hint' }, 'Stĺpec môžete vložiť aj do čiarového kódu, QR kódu alebo tabuľky – v ich paneli ťuknite na názov stĺpca. Pri tlači sa vytlačí jedna etiketa pre každý zvolený riadok.'),
+    previewTable(d),
+    h('div', { class: 'btn-row' },
+      h('button', {
+        class: 'btn', type: 'button',
+        onclick: async () => { const res = await loadDataFile(); if (res) { s.close(); setTimeout(() => confirmData(res), 250); } },
+      }, icon('upload', 20), h('span', null, 'Iný súbor')),
+      h('button', {
+        class: 'btn', type: 'button',
+        onclick: async () => {
+          if (!await confirmDialog('Odstrániť údaje z Excelu z tejto etikety?', { ok: 'Odstrániť', danger: true })) return;
+          delete l.data; persist(); updateHeader(); draw(); renderPanel(); s.close();
+        },
+      }, icon('trash', 20), h('span', null, 'Odstrániť')),
+    ),
+  );
+  s = openSheet({ title: 'Údaje z Excelu', body });
+}
+
+function confirmData(res) {
+  const l = E.label;
+  const data = { name: res.name, rows: res.rows, header: true, preview: 0, sheet: res.sheet || '', sheets: res.sheets || [] };
+  // ak prvý riadok vyzerá ako čísla, pravdepodobne nejde o hlavičku
+  if (res.rows[0] && res.rows[0].every((v) => v === '' || /^[\d.,\s-]+$/.test(v))) data.header = false;
+  let s;
+  const prevBox = h('div');
+  const info = h('div', { class: 'muted small' });
+  const refresh = () => {
+    prevBox.innerHTML = '';
+    prevBox.append(previewTable(data));
+    info.textContent = `${dataRecords(data).length} záznamov · stĺpce: ${dataColumns(data).join(', ')}`;
+  };
+  refresh();
+  const sheetSel = res.sheets && res.sheets.length > 1
+    ? field('Hárok', select(res.sheets.map((n, i) => ({ value: i, label: n })), res.sheets.indexOf(res.sheet), async (v) => {
+      const r2 = await loadDataFile(Number(v), res.file);
+      if (r2) { data.rows = r2.rows; data.sheet = r2.sheet; refresh(); }
+    }))
+    : null;
+  const body = h('div', null,
+    h('div', { class: 'data-head' }, icon('sheet', 22), h('div', null, h('b', null, res.name), info)),
+    sheetSel,
+    row('Prvý riadok obsahuje názvy stĺpcov', toggle(data.header, (v) => { data.header = v; refresh(); })),
+    prevBox,
+  );
+  s = openSheet({
+    title: 'Načítať údaje',
+    body,
+    footer: [
+      h('button', { class: 'btn', type: 'button', onclick: () => s.close() }, 'Zrušiť'),
+      h('button', {
+        class: 'btn btn-primary', type: 'button',
+        onclick: () => {
+          delete data.sheets;
+          l.data = data;
+          persist(); updateHeader(); renderPanel(); draw();
+          s.close();
+          setTimeout(() => { toast('Údaje sú pripojené – pridajte stĺpce na etiketu'); dataSheet(); }, 300);
+        },
+      }, 'Použiť'),
+    ],
+  });
+}
+
+export function openDataSheet() { if (E.label) dataSheet(); }
 
 // ---------------------------------------------------------------- nastavenia etikety
 function labelSettings() {
@@ -818,7 +1091,9 @@ function labelSettings() {
     field('Názov', name),
     h('div', { class: 'grid2' }, field('Šírka', wS), field('Výška', hS)),
     field('Bežné veľkosti', presets),
-    row('Otočiť o 180° pri tlači', toggle(!!l.flip, (v) => { l.flip = v; commitSoon(); }), 'Ak vychádza etiketa z tlačiarne hore nohami.'),
+    field('Smer tlače', segmented([0, 90, 180, 270].map((d) => ({ value: d, label: d + '°' })), labelDir(l), (v) => {
+      l.dir = Number(v); delete l.flip; updateHeader(); draw(); commitSoon();
+    }), 'Otočí celú etiketu na papieri – napr. 90° pre návrh na výšku na etikete na šírku, 180° ak vychádza hore nohami.'),
     h('div', { class: 'props-sub' }, 'Poradové číslo {cislo}'),
     h('div', { class: 'grid2' },
       field('Ďalšie číslo', stepper(serial.next ?? serial.start ?? 1, { step: 1, min: 0, max: 99999999, dec: 0 }, (v) => { serial.next = v; commitSoon(); })),
@@ -829,9 +1104,3 @@ function labelSettings() {
   openSheet({ title: 'Etiketa', body, onClose: () => { commitSoon.flush(); updateHeader(); layout(); draw(); } });
 }
 
-export async function confirmLeaveIfEmpty() {
-  if (E.label && !E.label.items.length) {
-    return confirmDialog('Etiketa je prázdna. Ponechať ju v zozname?', { ok: 'Ponechať', cancel: 'Zahodiť' });
-  }
-  return true;
-}

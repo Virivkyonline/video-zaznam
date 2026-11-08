@@ -74,6 +74,19 @@ const P = {
   upload: '<path d="M12 20V9M7 14l5-5 5 5M5 4h14"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/>',
   flash: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
+  table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M10 4v16"/>',
+  sheet: '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5M9 12l5 6M14 12l-5 6"/>',
+  star: '<path d="M12 3l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/>',
+  unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 7.7-1.5"/>',
+  edgeL: '<path d="M4 3v18"/><rect x="7" y="7" width="12" height="4" rx="1"/><rect x="7" y="13" width="7" height="4" rx="1"/>',
+  edgeR: '<path d="M20 3v18"/><rect x="5" y="7" width="12" height="4" rx="1"/><rect x="10" y="13" width="7" height="4" rx="1"/>',
+  edgeT: '<path d="M3 4h18"/><rect x="7" y="7" width="4" height="12" rx="1"/><rect x="13" y="7" width="4" height="7" rx="1"/>',
+  edgeB: '<path d="M3 20h18"/><rect x="7" y="5" width="4" height="12" rx="1"/><rect x="13" y="10" width="4" height="7" rx="1"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.6 2.1"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17v.5"/>',
+  folder: '<path d="M3 6.5h6l2 2h10V19H3z"/>',
+  share: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.8l7.6-3.6M8.2 13.2l7.6 3.6"/>',
 };
 
 export function svgIcon(name, size = 24) {

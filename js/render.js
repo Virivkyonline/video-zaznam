@@ -3,6 +3,8 @@
 // Pri tlači je s = 8 (203 dpi), takže 1 px = 1 bod tlačovej hlavy.
 
 import { encodeBarcode } from './barcode.js';
+import { rowMap, dataColumns, colLetter } from './datasource.js';
+import { drawIconShape } from './icons.js';
 
 export const DPMM = 8; // bodov na milimeter (203 dpi)
 export const PT_MM = 0.3528; // 1 typografický bod v mm
@@ -23,35 +25,75 @@ if (window.qrcode && qrcode.stringToBytesFuncs && qrcode.stringToBytesFuncs['UTF
 const pad2 = (n) => String(n).padStart(2, '0');
 const stripDia = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
 
-export function makeVars(label, serial) {
-  return { date: new Date(), serial: serial ?? label?.serial?.next ?? label?.serial?.start ?? 1, digits: label?.serial?.digits || 0 };
+export function makeVars(label, serial, rowIndex) {
+  const data = label?.data;
+  return {
+    date: new Date(),
+    serial: serial ?? label?.serial?.next ?? label?.serial?.start ?? 1,
+    digits: label?.serial?.digits || 0,
+    row: data ? rowMap(data, rowIndex ?? data.preview ?? 0) : null,
+  };
 }
 
-const VAR_RE = /\{\s*(datum|dátum|cas|čas|cislo|číslo|rok)\s*([+-]\s*\d+)?\s*\}/gi;
+const DAYS = ['nedeľa', 'pondelok', 'utorok', 'streda', 'štvrtok', 'piatok', 'sobota'];
+const MONTHS = ['január', 'február', 'marec', 'apríl', 'máj', 'jún', 'júl', 'august', 'september', 'október', 'november', 'december'];
+const BUILTIN = /^(datum|cas|cislo|rok|den|mesiac|datumcas)\s*([+-]\s*\d+)?$/;
+const fmtDate = (d) => `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`;
+const fmtTime = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 
-/** Nahradí {datum}, {datum+7}, {cas}, {rok}, {cislo} skutočnými hodnotami. */
+/**
+ * Nahradí premenné: {datum}, {datum+7}, {cas}, {datumcas}, {den}, {mesiac}, {rok}, {cislo}
+ * a stĺpce z Excelu {Názov stĺpca} (alebo {A}, {B}…).
+ */
 export function applyVars(str, vars) {
   str = str == null ? '' : String(str);
   if (str.indexOf('{') < 0) return str;
   const now = vars?.date || new Date();
-  return str.replace(VAR_RE, (m, key, off) => {
-    const k = stripDia(key.toLowerCase());
-    const o = off ? parseInt(off.replace(/\s/g, ''), 10) : 0;
-    if (k === 'datum') {
-      const d = new Date(now);
-      if (o) d.setDate(d.getDate() + o);
-      return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`;
+  return str.replace(/\{([^{}\n]{1,60})\}/g, (m, inner) => {
+    const key = inner.trim();
+    if (vars?.row) {
+      const v = vars.row.get(key.toLowerCase());
+      if (v !== undefined) return v;
     }
-    if (k === 'cas') return `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
-    if (k === 'rok') return String(now.getFullYear() + o);
-    if (k === 'cislo') return String((vars?.serial ?? 1) + o).padStart(vars?.digits || 0, '0');
-    return m;
+    const b = BUILTIN.exec(stripDia(key.toLowerCase()));
+    if (!b) return m;
+    const k = b[1];
+    const o = b[2] ? parseInt(b[2].replace(/\s/g, ''), 10) : 0;
+    const d = new Date(now);
+    switch (k) {
+      case 'datum': d.setDate(d.getDate() + o); return fmtDate(d);
+      case 'datumcas': d.setDate(d.getDate() + o); return `${fmtDate(d)} ${fmtTime(now)}`;
+      case 'den': d.setDate(d.getDate() + o); return DAYS[d.getDay()];
+      case 'cas': d.setMinutes(d.getMinutes() + o); return fmtTime(d);
+      case 'mesiac': d.setDate(1); d.setMonth(d.getMonth() + o); return MONTHS[d.getMonth()];
+      case 'rok': return String(now.getFullYear() + o);
+      case 'cislo': return String((vars?.serial ?? 1) + o).padStart(vars?.digits || 0, '0');
+      default: return m;
+    }
   });
+}
+
+/** Všetky texty prvku, v ktorých môžu byť premenné. */
+export function itemStrings(it) {
+  const out = [it.text, it.data];
+  if (it.type === 'table') (it.cells || []).forEach((r) => (r || []).forEach((c) => out.push(c)));
+  return out.filter((x) => typeof x === 'string' && x);
 }
 
 export function usesSerial(label) {
   const re = /\{\s*(cislo|číslo)/i;
-  return (label.items || []).some((it) => re.test(it.text || '') || re.test(it.data || ''));
+  return (label.items || []).some((it) => itemStrings(it).some((t) => re.test(t)));
+}
+
+/** Používa niektorý prvok stĺpce z Excelu? */
+export function usesData(label) {
+  if (!label.data) return false;
+  const names = new Set(dataColumns(label.data).map((c) => c.toLowerCase()));
+  dataColumns(label.data).forEach((_, i) => names.add(colLetter(i).toLowerCase()));
+  return (label.items || []).some((it) => itemStrings(it).some((t) => {
+    for (const m of t.matchAll(/\{([^{}\n]{1,60})\}/g)) if (names.has(m[1].trim().toLowerCase())) return true;
+    return false;
+  }));
 }
 
 // ---------------------------------------------------------------- obrázky
@@ -162,9 +204,11 @@ export function qrMatrix(text, ec = 'M') {
 
 // ---------------------------------------------------------------- text
 const LH = 1.15;
+const lhOf = (it) => it.lh || LH;
 
-function setFont(ctx, it, px) {
+function setFont(ctx, it, px, s = DPMM) {
   ctx.font = `${it.italic ? 'italic ' : ''}${it.bold ? '700' : '400'} ${px}px ${fontCss(it.font)}`;
+  if ('letterSpacing' in ctx) ctx.letterSpacing = it.ls ? `${it.ls * s}px` : '0px';
 }
 
 function wrapLines(ctx, text, maxW, wrap) {
@@ -196,10 +240,10 @@ function layoutText(ctx, it, W, H, s, vars) {
   let pt = it.size || 10;
   const fits = (p) => {
     const px = p * PT_MM * s;
-    setFont(ctx, it, px);
+    setFont(ctx, it, px, s);
     const ls = wrapLines(ctx, str, W, wrap);
     const maxW = Math.max(0, ...ls.map((l) => ctx.measureText(l).width));
-    return ls.length * px * LH <= H + 0.5 && maxW <= W + 0.5;
+    return ls.length * px * lhOf(it) <= H + 0.5 && maxW <= W + 0.5;
   };
   if (it.fit && !fits(pt)) {
     let lo = 2, hi = pt;
@@ -207,9 +251,9 @@ function layoutText(ctx, it, W, H, s, vars) {
     pt = lo;
   }
   const px = pt * PT_MM * s;
-  setFont(ctx, it, px);
+  setFont(ctx, it, px, s);
   const lines = wrapLines(ctx, str, W, wrap);
-  return { lines, px, lineH: px * LH };
+  return { lines, px, lineH: px * lhOf(it) };
 }
 
 function drawText(ctx, it, W, H, s, o) {
@@ -249,7 +293,7 @@ export function measureText(it, vars) {
   setFont(c, it, px);
   const lines = applyVars(it.text ?? '', vars).split('\n');
   const w = Math.max(...lines.map((l) => c.measureText(l).width), px * 0.6);
-  return { w: w / s + 0.6, h: (lines.length * px * LH) / s + 0.2 };
+  return { w: w / s + 0.6, h: (lines.length * px * lhOf(it)) / s + 0.2 };
 }
 
 /** Výška textu (mm) pri danej šírke rámčeka so zalamovaním. */
@@ -259,7 +303,7 @@ export function measureTextHeight(it, widthMm, vars) {
   const px = (it.size || 10) * PT_MM * s;
   setFont(c, it, px);
   const lines = wrapLines(c, applyVars(it.text ?? '', vars), widthMm * s, it.wrap !== false);
-  return (lines.length * px * LH) / s + 0.2;
+  return (lines.length * px * lhOf(it)) / s + 0.2;
 }
 
 // ---------------------------------------------------------------- čiarové kódy
@@ -411,6 +455,49 @@ function drawShape(ctx, it, W, H, s) {
   else { ctx.strokeStyle = '#000'; ctx.lineWidth = t; ctx.stroke(); }
 }
 
+// ---------------------------------------------------------------- tabuľka
+export function colWidths(it, W) {
+  const cols = Math.max(1, it.cols | 0);
+  const wts = Array.from({ length: cols }, (_, i) => Math.max(0.05, Number(it.colW?.[i]) || 1));
+  const sum = wts.reduce((a, b) => a + b, 0);
+  return wts.map((w) => (w / sum) * W);
+}
+
+function drawTable(ctx, it, W, H, s, o) {
+  const rows = Math.max(1, it.rows | 0), cols = Math.max(1, it.cols | 0);
+  const cw = colWidths(it, W);
+  const rh = H / rows;
+  const pad = 0.6 * s;
+  const R = o.print ? Math.round : (v) => v;
+  let x = -W / 2;
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      const text = it.cells?.[r]?.[c] ?? '';
+      if (!text) continue;
+      ctx.save();
+      ctx.translate(x + cw[c] / 2, -H / 2 + rh * (r + 0.5));
+      drawText(ctx, {
+        text, size: it.size || 8, font: it.font, bold: !!(it.headBold && r === 0) || !!(it.firstColBold && c === 0),
+        align: it.align || 'left', valign: 'middle', wrap: true, fit: true,
+      }, Math.max(1, cw[c] - pad * 2), Math.max(1, rh - pad), s, o);
+      ctx.restore();
+    }
+    x += cw[c];
+  }
+  const t = (it.border ?? 0.3) * s;
+  if (t <= 0) return;
+  const tw = Math.max(1, R(t));
+  ctx.fillStyle = '#000';
+  const L = R(-W / 2), T = R(-H / 2), Rr = R(W / 2), B = R(H / 2);
+  ctx.fillRect(L, T, Rr - L, tw);
+  ctx.fillRect(L, B - tw, Rr - L, tw);
+  ctx.fillRect(L, T, tw, B - T);
+  ctx.fillRect(Rr - tw, T, tw, B - T);
+  let cx = -W / 2;
+  for (let c = 0; c < cols - 1; c++) { cx += cw[c]; ctx.fillRect(R(cx - tw / 2), T, tw, B - T); }
+  for (let r = 1; r < rows; r++) ctx.fillRect(L, R(-H / 2 + rh * r - tw / 2), Rr - L, tw);
+}
+
 // ---------------------------------------------------------------- celá etiketa
 /** Rozmery obsahu prvku v jeho vlastnej (neotočenej) súradnicovej sústave, v mm. */
 export function localSize(it) {
@@ -434,6 +521,8 @@ export function drawItem(ctx, it, s, o = {}) {
     case 'image': drawImage(ctx, it, W, H, s, o); break;
     case 'line': drawLine(ctx, it, W, H, s, o); break;
     case 'shape': drawShape(ctx, it, W, H, s, o); break;
+    case 'table': drawTable(ctx, it, W, H, s, o); break;
+    case 'icon': drawIconShape(ctx, it.icon, W, H, it.weight ?? 2); break;
     default: break;
   }
   ctx.restore();

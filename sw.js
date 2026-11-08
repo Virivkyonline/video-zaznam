@@ -1,5 +1,5 @@
 // Service worker: aplikácia funguje aj bez internetu (po prvom otvorení).
-const CACHE = 'tlac-etikiet-v1';
+const CACHE = 'tlac-etikiet-v2';
 const ASSETS = [
   './',
   'index.html',
@@ -15,6 +15,8 @@ const ASSETS = [
   'js/templates.js',
   'js/scan.js',
   'js/importers.js',
+  'js/datasource.js',
+  'js/icons.js',
   'vendor/qrcode.js',
   'icons/icon.svg',
   'icons/icon-192.png',

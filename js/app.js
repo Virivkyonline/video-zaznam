@@ -4,17 +4,18 @@ import {
   $, $$, h, icon, svgIcon, toast, hideToast, openSheet, dropAllSheets, actionSheet, confirmDialog, promptDialog,
   toggle, stepper, field, row, select, fmt, pickFile, downloadBlob, sleep,
 } from './ui.js';
-import { allLabels, getLabel, putLabel, deleteLabel, getSettings, setSettings, resetSettings } from './store.js';
-import { thumbnail, preloadImages, usesSerial, makeVars, applyVars, qrMatrix, localSize } from './render.js';
+import { allLabels, getLabel, putLabel, deleteLabel, getSettings, setSettings, resetSettings, getHistory, addHistory, clearHistory } from './store.js';
+import { thumbnail, preloadImages, usesSerial, usesData, makeVars, applyVars, qrMatrix, drawLabel } from './render.js';
 import { encodeBarcode, guessFormat } from './barcode.js';
 import { TEMPLATES, SIZE_PRESETS, labelFromTemplate, newLabel, newItem } from './templates.js';
 import {
-  onStatus, getStatus, bluetoothSupport, choosePrinter, reconnect, disconnect, forget, printLabel,
-  rasterize, testLabel, canReconnectSilently, HEAD_MM,
+  onStatus, getStatus, bluetoothSupport, choosePrinter, reconnect, disconnect, forget, printLabel, printJobs,
+  rasterize, testLabel, canReconnectSilently, unprintableRects, HEAD_MM,
 } from './printer.js';
 import { openEditor, closeEditor, editorLabel, refreshEditor, setPrinterChip } from './editor.js';
 import { scanCode, scannerSupported } from './scan.js';
-import { imageFileToDataURL, pdfFileToDataURL } from './importers.js';
+import { imageFileToDataURL, openPdf, renderPdfPage } from './importers.js';
+import { dataRecords } from './datasource.js';
 
 const VERSION = '1.0.0';
 
@@ -149,6 +150,7 @@ function labelMenu(l) {
   actionSheet(l.name, [
     { label: 'Tlačiť', icon: 'printer', onClick: () => openPrint(l) },
     { label: 'Upraviť', icon: 'edit', onClick: () => go('#/editor/' + encodeURIComponent(l.id)) },
+    { label: 'Uložiť / zdieľať ako obrázok', icon: 'share', onClick: () => saveAsImage(l) },
     {
       label: 'Duplikovať', icon: 'copy', onClick: async () => {
         const c = JSON.parse(JSON.stringify(l));
@@ -224,27 +226,50 @@ async function actionCreate() {
 async function actionImport(kind) {
   const file = await pickFile(kind === 'pdf' ? 'application/pdf,.pdf' : 'image/*');
   if (!file) return;
-  toast(kind === 'pdf' ? 'Načítavam PDF…' : 'Načítavam obrázok…', 6000);
+  toast(kind === 'pdf' ? 'Načítavam PDF…' : 'Načítavam obrázok…', 8000);
   let res;
   try {
-    res = kind === 'pdf' ? await pdfFileToDataURL(file) : await imageFileToDataURL(file);
+    if (kind === 'pdf') {
+      const pdf = await openPdf(file);
+      hideToast();
+      let page = 1;
+      if (pdf.numPages > 1) {
+        const choice = await new Promise((resolve) => {
+          let picked = null;
+          const s = actionSheet(`PDF má ${pdf.numPages} strán`, [
+            { label: `Vytlačiť všetky strany (${pdf.numPages})`, icon: 'printer', onClick: () => { picked = 'all'; } },
+            { label: 'Upraviť jednu stranu ako etiketu', icon: 'edit', onClick: () => { picked = 'one'; } },
+          ]);
+          const prev = s.onClose;
+          s.onClose = () => { prev?.(); setTimeout(() => resolve(picked), 150); };
+        });
+        if (!choice) return;
+        if (choice === 'all') {
+          const first = await renderPdfPage(pdf, 1);
+          const size = await chooseSize({ title: 'Veľkosť etikety pre PDF', aspect: first.w / first.h, okText: 'Pokračovať' });
+          if (!size) return;
+          setSettings({ lastW: size.w, lastH: size.h });
+          await sleep(220);
+          openPrintPdf(pdf, file.name || 'PDF', size);
+          return;
+        }
+        const ans = await promptDialog(`Ktorú stranu použiť (1–${pdf.numPages})?`, '1', { ok: 'Použiť', inputmode: 'numeric' });
+        if (ans == null) return;
+        page = Math.min(pdf.numPages, Math.max(1, parseInt(ans, 10) || 1));
+      }
+      res = await renderPdfPage(pdf, page);
+    } else {
+      res = await imageFileToDataURL(file);
+    }
   } catch (e) {
     toast(e.message || 'Súbor sa nepodarilo načítať');
     return;
   }
   hideToast();
   if (!res) return;
-  const aspect = res.w / res.h;
-  const size = await chooseSize({ title: kind === 'pdf' ? 'Etiketa z PDF' : 'Etiketa z obrázka', aspect });
+  const size = await chooseSize({ title: kind === 'pdf' ? 'Etiketa z PDF' : 'Etiketa z obrázka', aspect: res.w / res.h });
   if (!size) return;
-  const label = newLabel(size.w, size.h, (file.name || 'Obrázok').replace(/\.[^.]+$/, ''));
-  const it = newItem('image', label, { src: res.src, mode: kind === 'pdf' ? 'threshold' : 'dither' });
-  const top = Math.min(getSettings().topSkip || 0, size.h * 0.4);
-  const aw = size.w - 1, ah = size.h - top - 0.5;
-  let w = aw, hh = aw / aspect;
-  if (hh > ah) { hh = ah; w = ah * aspect; }
-  Object.assign(it, { w: +w.toFixed(1), h: +hh.toFixed(1), x: +((size.w - w) / 2).toFixed(1), y: +(top + (ah - hh) / 2).toFixed(1) });
-  label.items.push(it);
+  const label = imageLabel(res, size, file.name, kind === 'pdf' ? 'threshold' : 'dither');
   await sleep(220);
   openNew(label);
 }
@@ -296,15 +321,11 @@ function renderTemplates() {
 // ---------------------------------------------------------------- TLAČ
 function labelWarnings(label) {
   const out = [];
-  const cfg = getSettings();
   const vars = makeVars(label);
-  const skip = (cfg.topSkip || 0) - (cfg.offsetY || 0);
-  // tlačiteľný rozsah vodorovne (hlava 48 mm je centrovaná na etikete)
-  const offX = (HEAD_MM - label.w) / 2 + (cfg.offsetX || 0);
-  const minX = Math.max(0, -offX), maxX = Math.min(label.w, HEAD_MM - offX);
-  let sideCut = false;
+  const cut = unprintableRects(label);
+  const overlaps = (it, r) => it.x < r.x + r.w - 0.2 && it.x + it.w > r.x + 0.2 && it.y < r.y + r.h - 0.2 && it.y + it.h > r.y + 0.2;
+  let cutHit = false;
   for (const it of label.items) {
-    if (it.x < minX - 0.1 || it.x + it.w > maxX + 0.1) sideCut = true;
     if (it.type === 'barcode') {
       const enc = encodeBarcode(it.format, applyVars(it.data, vars));
       if (!enc.ok) out.push(`${enc.error} – kód sa nevytlačí.`);
@@ -313,40 +334,24 @@ function labelWarnings(label) {
     if (it.type === 'image' && !it.src) out.push('Obrázok nie je vybraný.');
     if (it.x < -0.2 || it.y < -0.2 || it.x + it.w > label.w + 0.2 || it.y + it.h > label.h + 0.2) {
       out.push('Niektorý prvok presahuje okraj etikety.');
-    } else if (skip > 0 && it.y < skip - 0.2 && it.type !== 'shape') {
-      out.push(`Prvok zasahuje do horného pásu ${fmt(skip)} mm, ktorý sa netlačí (dá sa zmeniť v Nastaveniach).`);
-    }
+    } else if (it.type !== 'shape' && cut.some((r) => overlaps(it, r))) cutHit = true;
   }
-  if (sideCut) out.push(`Tlačiareň tlačí na šírku len ${HEAD_MM} mm – časť prvku pri bočnom okraji sa nevytlačí (šrafované v editore).`);
+  if (cutHit) out.push('Časť prvku je v šrafovanej oblasti, ktorá sa nevytlačí (horný pás alebo okraj mimo 48 mm hlavy). Dá sa zmeniť v Nastaveniach.');
+  if (label.data && !usesData(label)) out.push('Etiketa má pripojený Excel, ale žiadny prvok nepoužíva jeho stĺpce.');
   return [...new Set(out)];
 }
 
-async function openPrint(label) {
-  if (editorLabel() === label) await putLabel(label);
-  const serial = usesSerial(label);
-  label.serial = label.serial || { start: 1, step: 1, digits: 0, next: 1 };
-  let copies = 1;
-  let start = label.serial.next ?? label.serial.start ?? 1;
+/** Spoločné okno tlače: náhľad, ovládanie, stav tlačiarne, priebeh. */
+function printDialog({ title, warns = [], controls = [], renderPreview, run }) {
   const signal = { cancelled: false };
   let busy = false;
-
   const previewBox = h('div', { class: 'print-preview' });
   const meta = h('div', { class: 'print-meta muted' });
-  const renderPreview = async () => {
-    const r = await rasterize(label, makeVars(label, start));
-    r.canvas.className = 'raster';
-    previewBox.innerHTML = '';
-    previewBox.append(r.canvas);
-    const cfg = getSettings();
-    meta.textContent = `${fmt(label.w)} × ${fmt(label.h)} mm · tlačí sa ${fmt(r.height / 8)} mm na výšku` + (cfg.topSkip > 0 ? ` (horných ${fmt(cfg.topSkip)} mm sa netlačí)` : '');
-  };
-  const warns = labelWarnings(label);
   const status = h('div', { class: 'print-status' });
   const progress = h('div', { class: 'progress', hidden: true }, h('div', { class: 'progress-bar' }));
   const msg = h('div', { class: 'print-msg' });
   const printBtn = h('button', { class: 'btn btn-primary btn-lg', type: 'button' }, icon('printer', 22), h('span', null, 'Tlačiť'));
   const cancelBtn = h('button', { class: 'btn btn-lg', type: 'button' }, 'Zavrieť');
-
   const renderStatus = () => {
     const st = getStatus();
     status.innerHTML = '';
@@ -357,27 +362,20 @@ async function openPrint(label) {
   };
   const off = onStatus(renderStatus);
   renderStatus();
-
-  const body = h('div', { class: 'print-sheet' },
-    previewBox, meta,
-    warns.length ? h('ul', { class: 'warn-list' }, warns.map((w) => h('li', null, icon('warn', 16), h('span', null, w)))) : null,
-    h('div', { class: 'grid2' },
-      field('Počet kópií', stepper(1, { step: 1, min: 1, max: 999, dec: 0 }, (v) => { copies = v; })),
-      serial ? field('Začať číslom', stepper(start, { step: 1, min: 0, max: 99999999, dec: 0 }, (v) => { start = v; renderPreview(); })) : null,
-    ),
-    status, progress, msg,
-  );
+  const refresh = () => renderPreview(previewBox, meta);
   const s = openSheet({
-    title: 'Tlač – ' + (label.name || 'etiketa'),
-    body,
+    title,
+    body: h('div', { class: 'print-sheet' },
+      previewBox, meta,
+      warns.length ? h('ul', { class: 'warn-list' }, warns.map((w) => h('li', null, icon('warn', 16), h('span', null, w)))) : null,
+      controls, status, progress, msg),
     footer: [cancelBtn, printBtn],
     onClose: () => { signal.cancelled = true; off(); },
   });
   cancelBtn.addEventListener('click', () => {
     if (busy) { signal.cancelled = true; cancelBtn.textContent = 'Ruším…'; } else s.close();
   });
-  renderPreview();
-
+  refresh();
   printBtn.addEventListener('click', async () => {
     if (busy) return;
     msg.textContent = '';
@@ -392,25 +390,16 @@ async function openPrint(label) {
       await ensureConnected();
       progress.hidden = false;
       const bar = progress.firstChild;
-      await printLabel(label, {
-        copies,
-        serialStart: start,
+      const done = await run({
         signal,
         onProgress: (i, n, f) => {
           bar.style.width = `${Math.round(((i + f) / n) * 100)}%`;
           msg.textContent = n > 1 ? `Tlačím ${i + 1} z ${n}… ${Math.round(f * 100)} %` : `Posielam do tlačiarne… ${Math.round(f * 100)} %`;
         },
       });
-      if (serial) {
-        label.serial.next = start + copies * (label.serial.step || 1);
-        start = label.serial.next;
-      }
-      label.printed = Date.now();
-      label.updated = Date.now();
-      await putLabel(label);
-      msg.textContent = copies > 1 ? `Hotovo – odoslaných ${copies} etikiet.` : 'Hotovo – etiketa bola odoslaná do tlačiarne.';
+      msg.textContent = done;
       msg.className = 'print-msg ok';
-      if (serial) renderPreview();
+      refresh();
     } catch (e) {
       msg.textContent = e.message || String(e);
       msg.className = 'print-msg error';
@@ -421,6 +410,206 @@ async function openPrint(label) {
       setTimeout(() => { progress.hidden = true; progress.firstChild.style.width = '0'; }, 800);
     }
   });
+  return { refresh };
+}
+
+const doneText = (n) => (n > 1 ? `Hotovo – odoslaných ${n} etikiet.` : 'Hotovo – etiketa bola odoslaná do tlačiarne.');
+
+async function openPrint(label) {
+  if (editorLabel() === label) await putLabel(label);
+  const serial = usesSerial(label);
+  const hasData = !!label.data && dataRecords(label.data).length > 0;
+  const nRec = hasData ? dataRecords(label.data).length : 0;
+  label.serial = label.serial || { start: 1, step: 1, digits: 0, next: 1 };
+  let copies = 1;
+  let start = label.serial.next ?? label.serial.start ?? 1;
+  let from = 1, to = nRec;
+  const total = h('div', { class: 'print-total' });
+  const updTotal = () => {
+    const n = (hasData ? Math.max(0, to - from + 1) : 1) * copies;
+    total.textContent = `Spolu sa vytlačí: ${n} ${n === 1 ? 'etiketa' : n < 5 ? 'etikety' : 'etikiet'}`;
+  };
+  let dlg;
+  const controls = [];
+  if (hasData) {
+    controls.push(h('div', { class: 'notice data' }, icon('sheet', 20), h('span', null, `Excel „${label.data.name}“ – ${nRec} záznamov. Pre každý záznam sa vytlačí jedna etiketa.`)));
+    const fromS = stepper(1, { step: 1, min: 1, max: nRec, dec: 0 }, (v) => { from = v; if (to < from) { to = from; toS.set(to); } updTotal(); dlg?.refresh(); });
+    const toS = stepper(nRec, { step: 1, min: 1, max: nRec, dec: 0 }, (v) => { to = v; if (from > to) { from = to; fromS.set(from); } updTotal(); });
+    controls.push(h('div', { class: 'grid2' }, field('Od záznamu', fromS), field('Po záznam', toS)));
+  }
+  controls.push(h('div', { class: 'grid2' },
+    field(hasData ? 'Kópií z každého' : 'Počet kópií', stepper(1, { step: 1, min: 1, max: 999, dec: 0 }, (v) => { copies = v; updTotal(); })),
+    serial ? field('Začať číslom', stepper(start, { step: 1, min: 0, max: 99999999, dec: 0 }, (v) => { start = v; dlg?.refresh(); })) : null,
+  ));
+  controls.push(total);
+  updTotal();
+  dlg = printDialog({
+    title: 'Tlač – ' + (label.name || 'etiketa'),
+    warns: labelWarnings(label),
+    controls,
+    renderPreview: async (box, meta) => {
+      const r = await rasterize(label, makeVars(label, start, hasData ? from - 1 : undefined));
+      r.canvas.className = 'raster';
+      box.innerHTML = '';
+      box.append(r.canvas);
+      const cfg = getSettings();
+      meta.textContent = `${fmt(label.w)} × ${fmt(label.h)} mm · tlačí sa ${fmt(r.height / 8)} mm na výšku`
+        + (cfg.topSkip > 0 ? ` (horných ${fmt(cfg.topSkip)} mm sa netlačí)` : '')
+        + (hasData ? ` · náhľad záznamu ${from}` : '');
+    },
+    run: async ({ signal, onProgress }) => {
+      const n = (hasData ? to - from + 1 : 1) * copies;
+      await printLabel(label, { copies, serialStart: start, signal, onProgress, rowFrom: hasData ? from - 1 : undefined, rowTo: hasData ? to - 1 : undefined });
+      if (serial) {
+        label.serial.next = start + n * (label.serial.step || 1);
+        start = label.serial.next;
+      }
+      label.printed = Date.now();
+      label.updated = Date.now();
+      await putLabel(label);
+      addHistory({ id: label.id, name: label.name, w: label.w, h: label.h, count: n });
+      return doneText(n);
+    },
+  });
+}
+
+/** Tlač všetkých strán PDF – každá strana ako jedna etiketa. */
+async function openPrintPdf(pdf, fileName, size) {
+  const n = pdf.numPages;
+  const cache = new Map();
+  const pageLabel = async (p) => {
+    if (cache.has(p)) return cache.get(p);
+    const res = await renderPdfPage(pdf, p);
+    const label = imageLabel(res, size, fileName, 'threshold');
+    if (cache.size > 3) cache.delete(cache.keys().next().value);
+    cache.set(p, label);
+    return label;
+  };
+  let copies = 1;
+  let pFrom = 1, pTo = n;
+  const fromS = stepper(1, { step: 1, min: 1, max: n, dec: 0 }, (v) => { pFrom = v; if (pTo < pFrom) { pTo = pFrom; toS.set(pTo); } dlg.refresh(); });
+  const toS = stepper(n, { step: 1, min: 1, max: n, dec: 0 }, (v) => { pTo = v; if (pFrom > pTo) { pFrom = pTo; fromS.set(pFrom); } });
+  const dlg = printDialog({
+    title: `Tlač PDF – ${fileName}`,
+    controls: [
+      h('div', { class: 'grid2' }, field('Od strany', fromS), field('Po stranu', toS)),
+      field('Kópií z každej strany', stepper(1, { step: 1, min: 1, max: 99, dec: 0 }, (v) => { copies = v; })),
+    ],
+    renderPreview: async (box, meta) => {
+      const label = await pageLabel(pFrom);
+      const r = await rasterize(label);
+      r.canvas.className = 'raster';
+      box.innerHTML = '';
+      box.append(r.canvas);
+      meta.textContent = `${n} ${n < 5 ? 'strany' : 'strán'} · etiketa ${fmt(size.w)} × ${fmt(size.h)} mm · náhľad strany ${pFrom}`;
+    },
+    run: async ({ signal, onProgress }) => {
+      const pages = pTo - pFrom + 1;
+      await printJobs(pages * copies, async (i) => {
+        const label = await pageLabel(pFrom + Math.floor(i / copies));
+        return { label, vars: makeVars(label) };
+      }, { signal, onProgress });
+      addHistory({ name: `PDF: ${fileName}`, w: size.w, h: size.h, count: pages * copies });
+      return doneText(pages * copies);
+    },
+  });
+}
+
+/** Etiketa s jedným obrázkom roztiahnutým na plochu (pre PDF / obrázok). */
+function imageLabel(res, size, name, mode) {
+  const label = newLabel(size.w, size.h, (name || 'Obrázok').replace(/\.[^.]+$/, ''));
+  const it = newItem('image', label, { src: res.src, mode });
+  const top = Math.min(getSettings().topSkip || 0, size.h * 0.4);
+  const aspect = res.w / res.h;
+  const aw = size.w - 1, ah = size.h - top - 0.5;
+  let w = aw, hh = aw / aspect;
+  if (hh > ah) { hh = ah; w = ah * aspect; }
+  Object.assign(it, { w: +w.toFixed(1), h: +hh.toFixed(1), x: +((size.w - w) / 2).toFixed(1), y: +(top + (ah - hh) / 2).toFixed(1) });
+  label.items.push(it);
+  return label;
+}
+
+// ---------------------------------------------------------------- HISTÓRIA A POMOCNÍK
+async function openHistory() {
+  const list = getHistory();
+  let s;
+  const body = h('div');
+  if (!list.length) body.append(h('p', { class: 'muted' }, 'Zatiaľ ste nič nevytlačili.'));
+  for (const e of list) {
+    const label = e.id ? await getLabel(e.id) : null;
+    if (label) await preloadImages(label);
+    const when = new Date(e.t);
+    const item = h('button', { class: 'history-item row-link', type: 'button' },
+      h('div', { class: 'history-thumb' }, label ? thumbnail(label, 58, 38) : icon('doc', 22)),
+      h('div', { class: 'history-text' },
+        h('div', { class: 'history-name' }, e.name || 'Etiketa'),
+        h('div', { class: 'muted small' }, `${when.toLocaleDateString('sk-SK')} ${when.toLocaleTimeString('sk-SK', { hour: '2-digit', minute: '2-digit' })} · ${e.count || 1} ks · ${fmt(e.w)}×${fmt(e.h)} mm`)),
+      label ? icon('chevron', 18) : null);
+    if (label) {
+      item.addEventListener('click', () => {
+        s.close();
+        setTimeout(() => actionSheet(label.name, [
+          { label: 'Tlačiť znova', icon: 'printer', onClick: () => openPrint(label) },
+          { label: 'Upraviť', icon: 'edit', onClick: () => go('#/editor/' + encodeURIComponent(label.id)) },
+        ]), 250);
+      });
+    }
+    body.append(item);
+  }
+  s = openSheet({
+    title: 'História tlače',
+    body,
+    footer: list.length ? [h('button', {
+      class: 'btn', type: 'button',
+      onclick: async () => { if (await confirmDialog('Vymazať celú históriu tlače?', { ok: 'Vymazať', danger: true })) { clearHistory(); s.close(); toast('História bola vymazaná'); } },
+    }, icon('trash', 20), h('span', null, 'Vymazať históriu'))] : null,
+  });
+}
+
+function openHelp() {
+  const sec = (title, ...content) => h('div', null, h('h4', null, title), ...content);
+  openSheet({
+    title: 'Pomocník',
+    body: h('div', { class: 'help' },
+      sec('Prvé pripojenie tlačiarne',
+        h('ul', null,
+          h('li', null, 'Zapnite tlačiareň SK58 a úplne zatvorte aplikáciu Sinmark/OpenLabel.'),
+          h('li', null, 'Ťuknite na ikonu tlačiarne vpravo hore → Vyhľadať tlačiareň → vyberte SK58_… → Spárovať.'),
+          h('li', null, 'Používajte prehliadač Chrome v Androide (na iPhone aplikáciu Bluefy).'))),
+      sec('Nová etiketa',
+        h('p', null, 'Domov → Vytvoriť, zvoľte veľkosť (napr. 50 × 30 mm) a pridávajte prvky: text, čiarový kód, QR kód, obrázok, tabuľku, ikonu, dátum, číslovanie, čiaru či rámček. Prvok presuniete ťahaním, veľkosť zmeníte modrými úchytmi.')),
+      sec('Hromadná tlač z Excelu',
+        h('ul', null,
+          h('li', null, 'V editore ťuknite na Excel a vyberte súbor .xlsx alebo .csv.'),
+          h('li', null, 'Ťuknutím na názov stĺpca ho pridáte na etiketu. Do kódu alebo tabuľky stĺpec vložíte v ich paneli.'),
+          h('li', null, 'Pri tlači zvolíte rozsah záznamov – pre každý riadok sa vytlačí jedna etiketa.'))),
+      sec('Premenné v texte',
+        h('p', null, '{datum} dnešný dátum · {datum+7} o 7 dní · {cas} čas · {den} deň v týždni · {mesiac} · {rok} · {cislo} poradové číslo · {Názov stĺpca} hodnota z Excelu.')),
+      sec('PDF a obrázky',
+        h('p', null, 'PDF z e-shopu alebo prepravcu: Domov → PDF. Pri viacstranovom PDF môžete vytlačiť všetky strany naraz (každá strana = jedna etiketa) alebo jednu stranu upraviť.')),
+      sec('Ak tlač nesedí na etiketu',
+        h('ul', null,
+          h('li', null, 'Nastavenia → Vytlačiť testovaciu etiketu. Čísla na pravítku sú mm od horného okraja.'),
+          h('li', null, 'Upravte Nepotlačiteľný pás hore, Posun doprava a Posun nadol.'),
+          h('li', null, 'Ak je tlač hore nohami alebo otočená, v editore ťuknite na rozmer etikety → Smer tlače.'))),
+    ),
+  });
+}
+
+async function saveAsImage(label) {
+  await preloadImages(label);
+  const s = 16; // 16 px/mm ≈ 406 dpi
+  const c = document.createElement('canvas');
+  c.width = Math.round(label.w * s);
+  c.height = Math.round(label.h * s);
+  drawLabel(c.getContext('2d'), label, s, { vars: makeVars(label) });
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  const name = `${(label.name || 'etiketa').replace(/[^\p{L}\p{N} _-]+/gu, '').trim() || 'etiketa'}.png`;
+  const file = new File([blob], name, { type: 'image/png' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: label.name }); return; } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  downloadBlob(blob, name);
 }
 
 // ---------------------------------------------------------------- TLAČIAREŇ
@@ -560,8 +749,10 @@ function renderMeStatus() {
 let installEvt = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; if (current === 'me') renderMe(); });
 
-function renderMe() {
+async function renderMe() {
   const b = $('#me-body');
+  const nLabels = (await allLabels()).length;
+  const nHist = getHistory().reduce((a, e) => a + (e.count || 1), 0);
   const cfg = getSettings();
   const set = (k) => (v) => { setSettings({ [k]: v }); refreshEditor(); };
   b.innerHTML = '';
@@ -575,7 +766,14 @@ function renderMe() {
   const thr = h('input', { type: 'range', class: 'range', min: 60, max: 220, step: 4, value: cfg.threshold });
   thr.addEventListener('change', () => setSettings({ threshold: Number(thr.value) }));
 
+  const tile = (ic, label, value, onclick) => h('button', { class: 'me-tile', type: 'button', onclick }, icon(ic, 26), value != null ? h('b', null, String(value)) : null, h('span', null, label));
   b.append(
+    h('div', { class: 'me-grid' },
+      tile('templates', 'Moje etikety', nLabels, () => go('#/')),
+      tile('clock', 'Vytlačené', nHist, openHistory),
+      tile('help', 'Pomocník', null, openHelp),
+    ),
+    h('h2', { class: 'sec-title' }, 'Tlačiareň'),
     h('div', { class: 'card-plain' },
       h('button', { class: 'row row-link', type: 'button', onclick: () => go('#/tlaciaren') },
         h('div', { class: 'row-text' }, h('div', null, 'Tlačiareň'), h('div', { class: 'row-hint' }, meStatusEl)),
@@ -590,11 +788,11 @@ function renderMe() {
         field('Posun nadol', stepper(cfg.offsetY, { step: 0.5, min: -10, max: 10, suffix: 'mm' }, set('offsetY'))),
       ),
       field('Sýtosť textu a čiar', h('div', { class: 'range-row' }, h('span', { class: 'muted' }, 'tenšie'), thr, h('span', { class: 'muted' }, 'hrubšie'))),
-      field('Po vytlačení etikety', select([
-        { value: 'gsff', label: 'Posunúť na ďalšiu etiketu (medzera)' },
-        { value: 'ff', label: 'Posunúť na ďalšiu etiketu (FF)' },
-        { value: 'fixed', label: 'Súvislý papier – posunúť o pevnú dĺžku' },
-        { value: 'none', label: 'Neposúvať' },
+      field('Typ papiera / posun po etikete', select([
+        { value: 'gsff', label: 'Etikety (medzera / čierna značka)' },
+        { value: 'ff', label: 'Etikety s medzerou (príkaz FF)' },
+        { value: 'fixed', label: 'Súvislý papier – posun o pevnú dĺžku' },
+        { value: 'none', label: 'Neposúvať papier' },
       ], cfg.feed, (v) => { setSettings({ feed: v }); feedFixed.hidden = v !== 'fixed'; })),
       feedFixed,
       h('button', { class: 'btn btn-block', type: 'button', onclick: () => printTest() }, icon('printer', 20), h('span', null, 'Vytlačiť testovaciu etiketu')),
@@ -674,6 +872,8 @@ function init() {
   $('#q-pdf').addEventListener('click', () => actionImport('pdf'));
   $('#q-image').addEventListener('click', () => actionImport('image'));
   $('#q-scan').addEventListener('click', actionScan);
+  $('#home-history').innerHTML = svgIcon('clock', 24);
+  $('#home-history').addEventListener('click', openHistory);
   $('.qi-create').innerHTML = svgIcon('plus', 26);
   $('.qi-pdf').innerHTML = svgIcon('doc', 26);
   $('.qi-image').innerHTML = svgIcon('image', 26);
