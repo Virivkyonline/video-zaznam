@@ -1,0 +1,65 @@
+plugins {
+    id 'com.android.application'
+}
+
+def runNumber = Integer.parseInt(System.getenv('GITHUB_RUN_NUMBER') ?: '1')
+
+android {
+    namespace 'sk.virivky.tlacetikiet'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'sk.virivky.tlacetikiet'
+        minSdk 24
+        targetSdk 34
+        versionCode runNumber
+        versionName "1.3.${runNumber}"
+    }
+
+    signingConfigs {
+        release {
+            storeFile rootProject.file('release.keystore')
+            storePassword 'tlacetikiet'
+            keyAlias 'tlacetikiet'
+            keyPassword 'tlacetikiet'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+        debug {
+            signingConfig signingConfigs.release
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // webová časť aplikácie sa kopíruje z koreňa repozitára (pozri úlohu copyWeb)
+    sourceSets {
+        main.assets.srcDir(layout.buildDirectory.dir('generated/web').get().asFile)
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+def copyWeb = tasks.register('copyWeb', Copy) {
+    from(rootProject.file('..')) {
+        include 'index.html', 'styles.css', 'manifest.webmanifest'
+        include 'js/**', 'vendor/**', 'icons/**'
+    }
+    into layout.buildDirectory.dir('generated/web/www')
+}
+tasks.named('preBuild') { dependsOn copyWeb }

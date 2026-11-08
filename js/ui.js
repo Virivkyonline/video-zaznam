@@ -252,6 +252,13 @@ export function pickFile(accept) {
 }
 
 export function downloadBlob(blob, name) {
+  if (window.TlacNative) {
+    // Android aplikácia: uložiť do priečinka Stiahnuté
+    const fr = new FileReader();
+    fr.onload = () => toast(window.TlacNative.saveFile(name, blob.type || 'application/octet-stream', String(fr.result).split(',')[1], false), 4000);
+    fr.readAsDataURL(blob);
+    return;
+  }
   const a = h('a', { href: URL.createObjectURL(blob), download: name });
   document.body.append(a);
   a.click();

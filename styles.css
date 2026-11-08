@@ -416,3 +416,15 @@ select.input { appearance: none; background: #fff url("data:image/svg+xml,%3Csvg
 .notice.info { background: #eef4ff; color: #1f4fae; }
 .notice > div { flex: 1; }
 .notice .btn-block { margin: 10px 0 2px; color: #fff; text-decoration: none; }
+.dev-list { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.dev-item {
+  display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; border: 1px solid var(--border);
+  background: #fff; text-align: left; width: 100%;
+}
+.dev-item:active { background: #f1f3f6; }
+.dev-ic { width: 40px; height: 40px; border-radius: 10px; background: var(--accent-weak); color: var(--accent); display: grid; place-items: center; flex: none; }
+.dev-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dev-item-text b { font-size: 16px; }
+.scan-state { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #4a5160; margin: 4px 0 8px; }
+.spinner { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid #d6dce6; border-top-color: var(--accent); animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }

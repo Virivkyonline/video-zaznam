@@ -11,13 +11,14 @@ import { TEMPLATES, SIZE_PRESETS, labelFromTemplate, newLabel, newItem } from '.
 import {
   onStatus, getStatus, bluetoothSupport, choosePrinter, reconnect, disconnect, forget, printLabel, printJobs,
   rasterize, testLabel, canReconnectSilently, unprintableRects, bluetoothDiag, HEAD_MM,
+  isNativeApp, setNativePicker, onNativeEvent, nativeStartScan, nativeStopScan,
 } from './printer.js';
 import { openEditor, closeEditor, editorLabel, refreshEditor, setPrinterChip } from './editor.js';
 import { scanCode, scannerSupported } from './scan.js';
 import { imageFileToDataURL, openPdf, renderPdfPage } from './importers.js';
 import { dataRecords, dataColumns } from './datasource.js';
 
-const VERSION = '1.2.2';
+const VERSION = '1.3.0';
 
 // ---------------------------------------------------------------- navigácia
 let current = '';
@@ -647,6 +648,11 @@ async function saveAsImage(label) {
   drawLabel(c.getContext('2d'), label, s, { vars: makeVars(label) });
   const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
   const name = `${(label.name || 'etiketa').replace(/[^\p{L}\p{N} _-]+/gu, '').trim() || 'etiketa'}.png`;
+  if (window.TlacNative) {
+    const b64 = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(blob); });
+    toast(window.TlacNative.saveFile(name, 'image/png', b64, true), 4000);
+    return;
+  }
   const file = new File([blob], name, { type: 'image/png' });
   if (navigator.canShare?.({ files: [file] })) {
     try { await navigator.share({ files: [file], title: label.name }); return; } catch (e) { if (e.name === 'AbortError') return; }
@@ -655,6 +661,56 @@ async function saveAsImage(label) {
 }
 
 // ---------------------------------------------------------------- TLAČIAREŇ
+/** Zoznam nájdených Bluetooth zariadení v Android aplikácii. */
+function nativePicker({ all }) {
+  return new Promise((resolve) => {
+    let result = null;
+    let showAll = all;
+    let s = null;
+    const devices = new Map();
+    const isPrinter = (d) => /sk\s?58|sinmark|print|label|^sk[_-]?\d|pt-?\d|mpt|kaysion/i.test(d.name || '');
+    const list = h('div', { class: 'dev-list' });
+    const spin = h('span', { class: 'spinner' });
+    const stText = h('span', null, 'Hľadám zariadenia v okolí…');
+    const hint = h('div', { class: 'notice info', hidden: true });
+    const render = () => {
+      list.innerHTML = '';
+      const arr = [...devices.values()].filter((d) => showAll || isPrinter(d))
+        .sort((a, b) => (isPrinter(b) - isPrinter(a)) || ((b.rssi || -999) - (a.rssi || -999)));
+      if (!arr.length) {
+        list.append(h('p', { class: 'muted small pad' }, showAll
+          ? 'Zatiaľ sa nenašlo žiadne zariadenie.'
+          : 'Zatiaľ sa nenašla tlačiareň. Ak sa neobjaví, zapnite nižšie „Zobraziť všetky zariadenia“.'));
+      }
+      for (const d of arr) {
+        list.append(h('button', { class: 'dev-item', type: 'button', onclick: () => { result = d; s?.close(); } },
+          h('span', { class: 'dev-ic', html: svgIcon(isPrinter(d) ? 'printer' : 'bluetooth', 22) }),
+          h('span', { class: 'dev-item-text' }, h('b', null, d.name || 'Neznáme zariadenie'), h('span', { class: 'muted small' }, d.id + (d.bonded ? ' · spárované' : ''))),
+          h('span', { class: 'chip chip-sm chip-accent' }, 'Pripojiť')));
+      }
+    };
+    const off = onNativeEvent((ev) => {
+      if (ev.type === 'device') { devices.set(ev.id, ev); render(); }
+      else if (ev.type === 'scanStarted') { spin.hidden = false; stText.textContent = 'Hľadám zariadenia v okolí…'; }
+      else if (ev.type === 'scanStopped') { spin.hidden = true; stText.textContent = 'Hľadanie skončilo.'; }
+      else if (ev.type === 'scanError' || ev.type === 'error') { spin.hidden = true; stText.textContent = ev.message; }
+      else if (ev.type === 'hint') { hint.hidden = false; hint.textContent = ev.message; }
+    });
+    const again = h('button', { class: 'btn', type: 'button', onclick: () => { devices.clear(); render(); nativeStartScan(); } }, icon('refresh', 20), h('span', null, 'Hľadať znova'));
+    s = openSheet({
+      title: 'Vyberte tlačiareň',
+      body: h('div', null,
+        h('div', { class: 'scan-state' }, spin, stText),
+        hint, list,
+        row('Zobraziť všetky zariadenia', toggle(showAll, (v) => { showAll = v; render(); }))),
+      footer: [again],
+      onClose: () => { off(); nativeStopScan(); setTimeout(() => resolve(result), 0); },
+    });
+    render();
+    nativeStartScan();
+  });
+}
+
 let needChooser = false;
 
 /** Pripojí tlačiareň: najprv sa skúsi pripojiť k známej, inak otvorí výber zariadení. */
@@ -690,7 +746,7 @@ async function connectFlow(btn) {
   }
 }
 
-const isSamsung = /SamsungBrowser/i.test(navigator.userAgent);
+const isSamsung = /SamsungBrowser/i.test(navigator.userAgent) && !isNativeApp();
 const isAndroid = /Android/i.test(navigator.userAgent);
 let pickerStuck = false;
 
@@ -717,7 +773,7 @@ function renderPrinter() {
   body.innerHTML = '';
   if (!sup.ok) body.append(h('div', { class: 'notice error' }, icon('warn', 20), h('span', null, sup.reason)));
   if (isSamsung && !st.connected) body.append(chromeNotice(pickerStuck));
-  else if (!sup.ok && isAndroid) body.append(chromeNotice(false));
+  else if (!sup.ok && isAndroid && !isNativeApp()) body.append(chromeNotice(false));
 
   body.append(h('h2', { class: 'sec-title' }, 'Moje zariadenia'));
   if (st.saved || st.connected) {
@@ -779,7 +835,9 @@ function renderPrinter() {
       h('div', { class: 'diag-row' }, h('span', null, 'Prehliadač'), h('b', null, `${d.browser}${d.android ? ' · Android ' + d.android : ''}`)),
       h('div', { class: 'diag-row' }, h('span', null, 'Bluetooth v prehliadači'), h('b', { class: d.api ? 'ok' : 'bad' }, yes(d.api))),
       h('div', { class: 'diag-row' }, h('span', null, 'Bluetooth v telefóne zapnutý'), h('b', { class: d.available === false ? 'bad' : d.available ? 'ok' : '' }, yes(d.available))),
-      h('div', { class: 'diag-row' }, h('span', null, 'Zabezpečená adresa (https)'), h('b', { class: d.secure ? 'ok' : 'bad' }, yes(d.secure))),
+      d.perms !== undefined
+        ? h('div', { class: 'diag-row' }, h('span', null, 'Povolenie Zariadenia v blízkosti'), h('b', { class: d.perms ? 'ok' : '' }, d.perms ? '✓ áno' : 'opýta sa pri hľadaní'))
+        : h('div', { class: 'diag-row' }, h('span', null, 'Zabezpečená adresa (https)'), h('b', { class: d.secure ? 'ok' : 'bad' }, yes(d.secure))),
     );
   });
 
@@ -787,14 +845,18 @@ function renderPrinter() {
     h('h2', { class: 'sec-title' }, 'Pripojiť tlačiareň'),
     search,
     searchAll,
-    h('p', { class: 'muted small pad' }, 'Po ťuknutí sa otvorí okno prehliadača so zoznamom zariadení. Počkajte pár sekúnd, kým sa objaví SK58_… (napr. SK58_D63F), ťuknite naň a potom na „Spárovať“ / „Pair“.'),
+    h('p', { class: 'muted small pad' }, isNativeApp()
+      ? 'Po ťuknutí sa zobrazí zoznam zariadení v okolí. Počkajte pár sekúnd, kým sa objaví SK58_… (napr. SK58_D63F), a ťuknite naň.'
+      : 'Po ťuknutí sa otvorí okno prehliadača so zoznamom zariadení. Počkajte pár sekúnd, kým sa objaví SK58_… (napr. SK58_D63F), ťuknite naň a potom na „Spárovať“ / „Pair“.'),
     h('h3', { class: 'tips-title' }, 'Ak sa tlačiareň nedá pripojiť:'),
     h('ol', { class: 'tips' },
       h('li', null, h('b', null, 'Vypnite appku Sinmark úplne: '), 'podržte prst na jej ikone → Informácie o aplikácii → Vynútiť zastavenie. Kým je spustená, tlačiareň je „obsadená“.'),
       h('li', null, 'Tlačiareň zapnite tlačidlom (nie len nabíjanie) a dajte ju k telefónu.'),
       h('li', null, 'V telefóne zapnite Bluetooth aj Polohu (rýchle nastavenia – stiahnite lištu zhora).'),
-      h('li', null, 'Povoľte prehliadaču Bluetooth: Nastavenia → Aplikácie → Samsung Internet → Povolenia → Zariadenia v blízkosti → Povoliť, a Poloha → Povoliť.'),
-      h('li', null, 'Ak sa okno so zoznamom vôbec neotvorí, zatvorte a znova otvorte prehliadač a skúste to ešte raz.'),
+      isNativeApp()
+        ? h('li', null, 'Keď sa aplikácia opýta na „Zariadenia v blízkosti“ (alebo Polohu), ťuknite na Povoliť. Ak ste omylom zamietli: Nastavenia → Aplikácie → Tlač etikiet → Povolenia.')
+        : h('li', null, 'Povoľte prehliadaču Bluetooth: Nastavenia → Aplikácie → Samsung Internet → Povolenia → Zariadenia v blízkosti → Povoliť, a Poloha → Povoliť.'),
+      isNativeApp() ? null : h('li', null, 'Ak sa okno so zoznamom vôbec neotvorí, zatvorte a znova otvorte prehliadač a skúste to ešte raz.'),
       h('li', null, 'Ak sa tlačiareň nezobrazí ani pri „Zobraziť všetky“, vypnite a zapnite tlačiareň a počkajte 10 sekúnd.'),
       h('li', null, 'Ak je SK58 v Nastaveniach telefónu → Pripojenia → Bluetooth vedená ako pripojená, ťuknite na ňu a odpojte ju.'),
     ),
@@ -967,7 +1029,7 @@ async function renderMe() {
       }, 'Nainštalovať na plochu') : null,
       h('p', null, h('b', null, 'Tlač etikiet'), ` · verzia ${VERSION}`),
       h('p', { class: 'muted' }, `Bluetooth: ${bluetoothSupport().ok ? 'podporovaný ✓' : 'nepodporovaný ✗'} · Skener kódov: ${scannerSupported() ? 'áno ✓' : 'nie ✗'}`),
-      h('p', { class: 'muted small' }, 'Pre tlačiarne SK58 (Sinmark) a podobné Bluetooth tlačiarne s príkazmi ESC/POS, 203 dpi, šírka tlače 48 mm. Funguje v Samsung Internete aj v Chrome na Androide.'),
+      h('p', { class: 'muted small' }, 'Pre tlačiarne SK58 (Sinmark) a podobné Bluetooth tlačiarne s príkazmi ESC/POS, 203 dpi, šírka tlače 48 mm. ' + (isNativeApp() ? 'Android aplikácia s vlastným Bluetooth pripojením.' : 'Funguje v Samsung Internete aj v Chrome na Androide.')),
     ),
   );
 }
@@ -1020,9 +1082,10 @@ function init() {
   route();
 
   // tichý pokus o opätovné pripojenie k naposledy použitej tlačiarni
-  if (getStatus().saved && navigator.bluetooth?.getDevices) reconnect({ quiet: true }).catch(() => {});
+  setNativePicker(nativePicker);
+  if (getStatus().saved && (isNativeApp() || navigator.bluetooth?.getDevices)) reconnect({ quiet: true }).catch(() => {});
 
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !isNativeApp()) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 }

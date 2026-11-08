@@ -26,6 +26,22 @@ const KNOWN = [
 const OPTIONAL_SERVICES = [...new Set([...KNOWN.map((k) => k[0]), 0xfee7, 0xaf30, 0xff80, 0x18f1, 0xff10, 0xae00, 0xfee9, 0xffb0])];
 const LS_DEVICE = 'tlac-etikiet:tlaciaren';
 
+// ---------------------------------------------------------------- Android aplikácia (natívny Bluetooth)
+// V Android aplikácii je k dispozícii objekt window.TlacNative (BleBridge.java) a udalosti
+// prichádzajú cez window.__tlacNative(udalosť).
+const NATIVE = typeof window !== 'undefined' && window.TlacNative ? window.TlacNative : null;
+const nativeListeners = new Set();
+if (NATIVE) {
+  window.__tlacNative = (ev) => nativeListeners.forEach((fn) => { try { fn(ev); } catch (e) { console.error(e); } });
+}
+export const isNativeApp = () => !!NATIVE;
+export function onNativeEvent(fn) { nativeListeners.add(fn); return () => nativeListeners.delete(fn); }
+let nativePicker = null;
+/** Aplikácia zaregistruje okno so zoznamom nájdených zariadení: fn({all}) → Promise<{id,name}|null>. */
+export function setNativePicker(fn) { nativePicker = fn; }
+export function nativeStartScan() { NATIVE?.startScan(); }
+export function nativeStopScan() { NATIVE?.stopScan(); }
+
 const state = {
   device: null,
   server: null,
@@ -35,6 +51,58 @@ const state = {
   info: '',
 };
 const listeners = new Set();
+
+if (NATIVE) {
+  onNativeEvent((ev) => {
+    if (ev.type === 'disconnected' && state.status === 'connected') onDisconnected();
+  });
+}
+
+function nativeConnect(id, nameHint) {
+  return new Promise((resolve, reject) => {
+    setStatus('connecting');
+    let t = null;
+    const off = onNativeEvent((ev) => {
+      if (ev.type === 'connected') {
+        off(); clearTimeout(t);
+        state.device = { id: ev.id, name: ev.name || nameHint || 'Tlačiareň' };
+        state.char = true;
+        state.info = ev.info || '';
+        localStorage.setItem(LS_DEVICE, JSON.stringify({ id: ev.id, name: state.device.name }));
+        setStatus('connected');
+        resolve(true);
+      } else if (ev.type === 'connectError' || ev.type === 'error') {
+        off(); clearTimeout(t);
+        setStatus('disconnected', ev.message);
+        reject(new Error(ev.message));
+      }
+    });
+    t = setTimeout(() => { off(); setStatus('disconnected', 'Tlačiareň neodpovedá.'); reject(new Error('Tlačiareň neodpovedá. Je zapnutá a blízko?')); }, 40000);
+    NATIVE.connect(id);
+  });
+}
+
+function toBase64(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+function nativeSend(bytes, o = {}) {
+  const cfg = getSettings();
+  const id = Math.random().toString(36).slice(2);
+  return new Promise((resolve, reject) => {
+    const off = onNativeEvent((ev) => {
+      if (ev.id !== id) return;
+      if (ev.type === 'progress') o.onProgress?.(ev.sent, ev.total);
+      else if (ev.type === 'writeDone') { done(); resolve(); }
+      else if (ev.type === 'writeError') { done(); reject(new Error(ev.message)); }
+    });
+    const iv = setInterval(() => { if (o.signal?.cancelled) NATIVE.cancelWrite(); }, 200);
+    const done = () => { off(); clearInterval(iv); };
+    NATIVE.write(toBase64(bytes), cfg.chunk | 0 || 20, cfg.delay | 0, id);
+  });
+}
 
 export function onStatus(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 function emit() { listeners.forEach((fn) => { try { fn(getStatus()); } catch (e) { console.error(e); } }); }
@@ -58,6 +126,11 @@ export function savedDevice() {
 
 /** Diagnostika pre obrazovku tlačiarne. */
 export async function bluetoothDiag() {
+  if (NATIVE) {
+    let i = {};
+    try { i = JSON.parse(NATIVE.info()); } catch { i = {}; }
+    return { browser: `Android aplikácia ${i.version || ''}`.trim(), api: !!i.bluetooth, secure: true, available: !!i.enabled, android: i.android || '', perms: i.permissions };
+  }
   const ua = navigator.userAgent;
   const m = /SamsungBrowser\/([\d.]+)/.exec(ua) || /Chrome\/([\d.]+)/.exec(ua);
   const browser = /SamsungBrowser/.test(ua) ? `Samsung Internet ${m ? m[1] : ''}` : /Chrome/.test(ua) ? `Chrome ${m ? m[1] : ''}` : 'iný prehliadač';
@@ -67,6 +140,7 @@ export async function bluetoothDiag() {
 }
 
 export function bluetoothSupport() {
+  if (NATIVE) return { ok: true, native: true };
   if (!window.isSecureContext) return { ok: false, reason: 'Bluetooth funguje len na zabezpečenej adrese (https).' };
   if (!navigator.bluetooth) {
     const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -149,6 +223,14 @@ async function setupGatt(device) {
 export async function choosePrinter({ all = false } = {}) {
   const sup = bluetoothSupport();
   if (!sup.ok) throw new Error(sup.reason);
+  if (NATIVE) {
+    if (!nativePicker) throw new Error('Výber zariadení nie je pripravený.');
+    const picked = await nativePicker({ all });
+    if (!picked) throw new Error('Výber zariadenia bol zrušený.');
+    await nativeConnect(picked.id, picked.name);
+    if (all) setSettings({ showAll: true });
+    return state.device;
+  }
   const opts = all
     ? { acceptAllDevices: true, optionalServices: OPTIONAL_SERVICES }
     : {
@@ -189,6 +271,11 @@ export async function choosePrinter({ all = false } = {}) {
 export async function reconnect({ quiet = false } = {}) {
   if (state.status === 'connected' && state.char) return true;
   if (state.status === 'connecting') return false;
+  if (NATIVE) {
+    const saved = savedDevice();
+    if (!saved) return false;
+    try { await nativeConnect(saved.id, saved.name); return true; } catch (e) { if (!quiet) throw e; return false; }
+  }
   let device = state.device;
   if (!device && navigator.bluetooth?.getDevices) {
     try {
@@ -208,11 +295,13 @@ export async function reconnect({ quiet = false } = {}) {
 }
 
 export function canReconnectSilently() {
+  if (NATIVE) return !!savedDevice();
   return !!state.device || !!navigator.bluetooth?.getDevices;
 }
 
 export function disconnect() {
-  try { state.device?.gatt?.disconnect(); } catch { /* nič */ }
+  if (NATIVE) NATIVE.disconnect();
+  else { try { state.device?.gatt?.disconnect(); } catch { /* nič */ } }
   onDisconnected();
 }
 
@@ -246,6 +335,7 @@ async function writeChunk(ch, chunk) {
  */
 export async function sendBytes(bytes, o = {}) {
   if (!state.char) throw new Error('Tlačiareň nie je pripojená.');
+  if (NATIVE) return nativeSend(bytes, o);
   const cfg = getSettings();
   const size = Math.max(10, Math.min(512, cfg.chunk | 0 || 20));
   const delay = Math.max(0, cfg.delay | 0);
