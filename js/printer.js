@@ -5,7 +5,7 @@
 // potom príkaz GS FF (1D 0C), ktorý posunie papier k ďalšej etikete (detekcia medzery).
 
 import { DPMM, drawLabel, makeVars, preloadImages } from './render.js';
-import { getSettings } from './store.js';
+import { getSettings, setSettings } from './store.js';
 import { sleep } from './ui.js';
 
 export const HEAD_DOTS = 384; // šírka tlačovej hlavy v bodoch
@@ -19,8 +19,11 @@ const KNOWN = [
   [0xae30, 0xae01],
   ['49535343-fe7d-4ae5-8fa9-9fafd205e455', '49535343-8841-43f4-a8d4-ecbe34729bb3'],
   ['e7810a71-73ae-499d-8c15-faa9aef0c3f2', 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f'],
+  [0xfff0, 0xfff2],
+  [0xffe5, 0xffe9],
+  ['6e400001-b5a3-f393-e0a9-e50e24dcca9e', '6e400002-b5a3-f393-e0a9-e50e24dcca9e'],
 ];
-const OPTIONAL_SERVICES = [...new Set([...KNOWN.map((k) => k[0]), 0xfee7, 0xaf30, 0xff80, 0x18f1])];
+const OPTIONAL_SERVICES = [...new Set([...KNOWN.map((k) => k[0]), 0xfee7, 0xaf30, 0xff80, 0x18f1, 0xff10, 0xae00, 0xfee9, 0xffb0])];
 const LS_DEVICE = 'tlac-etikiet:tlaciaren';
 
 const state = {
@@ -51,6 +54,16 @@ export function getStatus() {
 
 export function savedDevice() {
   try { return JSON.parse(localStorage.getItem(LS_DEVICE) || 'null'); } catch { return null; }
+}
+
+/** Diagnostika pre obrazovku tlačiarne. */
+export async function bluetoothDiag() {
+  const ua = navigator.userAgent;
+  const m = /SamsungBrowser\/([\d.]+)/.exec(ua) || /Chrome\/([\d.]+)/.exec(ua);
+  const browser = /SamsungBrowser/.test(ua) ? `Samsung Internet ${m ? m[1] : ''}` : /Chrome/.test(ua) ? `Chrome ${m ? m[1] : ''}` : 'iný prehliadač';
+  let available = null;
+  try { if (navigator.bluetooth?.getAvailability) available = await navigator.bluetooth.getAvailability(); } catch { available = null; }
+  return { browser, api: !!navigator.bluetooth, secure: window.isSecureContext, available, android: (/Android ([\d.]+)/.exec(ua) || [])[1] || '' };
 }
 
 export function bluetoothSupport() {
@@ -153,11 +166,22 @@ export async function choosePrinter({ all = false } = {}) {
   try {
     device = await navigator.bluetooth.requestDevice(opts);
   } catch (e) {
-    if (e.name === 'NotFoundError') throw new Error('Výber bol zrušený alebo sa nenašla žiadna tlačiareň.');
-    if (e.name === 'SecurityError') throw new Error('Prehliadač nepovolil Bluetooth. Skúste znova ťuknutím na tlačidlo.');
-    throw e;
+    const raw = `${e.name}: ${e.message}`;
+    let msg;
+    if (/adapter not available|adapter.*off|Bluetooth.*(off|disabled)/i.test(e.message)) msg = 'Bluetooth v telefóne je vypnutý. Zapnite ho a skúste znova.';
+    else if (/cancel/i.test(e.message)) msg = 'Výber zariadenia bol zrušený. Ak ste tlačiareň v zozname nevideli, skúste „Zobraziť všetky zariadenia“.';
+    else if (e.name === 'NotFoundError') msg = 'Nenašla sa žiadna tlačiareň.';
+    else if (e.name === 'SecurityError' || e.name === 'NotAllowedError') msg = 'Prehliadač nemá povolenie na Bluetooth. Povoľte mu „Zariadenia v blízkosti“ a Polohu (Nastavenia → Aplikácie → prehliadač → Povolenia).';
+    else msg = 'Bluetooth zlyhal.';
+    state.error = `${msg} (${raw})`;
+    emit();
+    const err = new Error(msg);
+    err.raw = raw;
+    throw err;
   }
   await setupGatt(device);
+  // tlačiareň bola nájdená len v zozname všetkých zariadení → nabudúce ho otvoriť rovno
+  if (all) setSettings({ showAll: true });
   return device;
 }
 

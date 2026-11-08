@@ -10,14 +10,14 @@ import { encodeBarcode, guessFormat } from './barcode.js';
 import { TEMPLATES, SIZE_PRESETS, labelFromTemplate, newLabel, newItem } from './templates.js';
 import {
   onStatus, getStatus, bluetoothSupport, choosePrinter, reconnect, disconnect, forget, printLabel, printJobs,
-  rasterize, testLabel, canReconnectSilently, unprintableRects, HEAD_MM,
+  rasterize, testLabel, canReconnectSilently, unprintableRects, bluetoothDiag, HEAD_MM,
 } from './printer.js';
 import { openEditor, closeEditor, editorLabel, refreshEditor, setPrinterChip } from './editor.js';
 import { scanCode, scannerSupported } from './scan.js';
 import { imageFileToDataURL, openPdf, renderPdfPage } from './importers.js';
 import { dataRecords, dataColumns } from './datasource.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 
 // ---------------------------------------------------------------- navigácia
 let current = '';
@@ -726,27 +726,44 @@ function renderPrinter() {
   }
   if (st.error) body.append(h('div', { class: 'notice error' }, icon('warn', 20), h('span', null, st.error)));
 
-  const search = h('button', { class: 'btn btn-primary btn-lg btn-block', type: 'button' }, icon('bluetooth', 22), h('span', null, 'Vyhľadať tlačiareň'));
-  search.addEventListener('click', async () => {
-    search.disabled = true;
-    try { await choosePrinter({ all: getSettings().showAll }); toast('Tlačiareň je pripojená'); } catch (e) { toast(e.message || String(e), 5000); } finally { search.disabled = false; }
+  const run = async (btn, all) => {
+    btn.disabled = true;
+    try { await choosePrinter({ all }); toast('Tlačiareň je pripojená'); } catch (e) { toast(e.message || String(e), 5000); } finally { btn.disabled = false; }
+  };
+  const search = h('button', { class: 'btn btn-primary btn-lg btn-block', type: 'button' }, icon('bluetooth', 22), h('span', null, 'Vyhľadať tlačiareň SK58'));
+  search.addEventListener('click', () => run(search, false));
+  const searchAll = h('button', { class: 'btn btn-lg btn-block', type: 'button' }, icon('refresh', 20), h('span', null, 'Zobraziť všetky Bluetooth zariadenia'));
+  searchAll.addEventListener('click', () => run(searchAll, true));
+
+  const diag = h('div', { class: 'card-plain diag' }, h('div', { class: 'muted small' }, 'Zisťujem stav Bluetooth…'));
+  bluetoothDiag().then((d) => {
+    const yes = (v) => (v === true ? '✓ áno' : v === false ? '✗ nie' : '? nedá sa zistiť');
+    diag.innerHTML = '';
+    diag.append(
+      h('div', { class: 'props-sub' }, 'Diagnostika'),
+      h('div', { class: 'diag-row' }, h('span', null, 'Prehliadač'), h('b', null, `${d.browser}${d.android ? ' · Android ' + d.android : ''}`)),
+      h('div', { class: 'diag-row' }, h('span', null, 'Bluetooth v prehliadači'), h('b', { class: d.api ? 'ok' : 'bad' }, yes(d.api))),
+      h('div', { class: 'diag-row' }, h('span', null, 'Bluetooth v telefóne zapnutý'), h('b', { class: d.available === false ? 'bad' : d.available ? 'ok' : '' }, yes(d.available))),
+      h('div', { class: 'diag-row' }, h('span', null, 'Zabezpečená adresa (https)'), h('b', { class: d.secure ? 'ok' : 'bad' }, yes(d.secure))),
+    );
   });
+
   body.append(
-    h('div', { class: 'sec-head' }, h('h2', { class: 'sec-title' }, 'Dostupné zariadenia'),
-      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Hľadať znova', html: svgIcon('refresh'), onclick: () => search.click() })),
+    h('h2', { class: 'sec-title' }, 'Pripojiť tlačiareň'),
     search,
-    h('div', { class: 'card-plain' }, row('Zobraziť všetky Bluetooth zariadenia', toggle(getSettings().showAll, (v) => setSettings({ showAll: v })), 'Ak sa tlačiareň v zozname neobjaví.')),
-    h('p', { class: 'muted small pad' }, 'Zoznam nájdených zariadení zobrazí prehliadač v okne „Spárovať“. Vyberte tlačiareň (napr. SK58_D63F) a ťuknite na Spárovať.'),
-    h('h3', { class: 'tips-title' }, 'Ak sa tlačiareň nenájde:'),
+    searchAll,
+    h('p', { class: 'muted small pad' }, 'Po ťuknutí sa otvorí okno prehliadača so zoznamom zariadení. Počkajte pár sekúnd, kým sa objaví SK58_… (napr. SK58_D63F), ťuknite naň a potom na „Spárovať“ / „Pair“.'),
+    h('h3', { class: 'tips-title' }, 'Ak sa tlačiareň nedá pripojiť:'),
     h('ol', { class: 'tips' },
-      h('li', null, 'Skúste vyhľadávanie znova.'),
-      h('li', null, 'Tlačiareň musí byť blízko telefónu.'),
-      h('li', null, 'Tlačiareň musí byť zapnutá (nie len v nabíjaní).'),
-      h('li', null, 'Tlačiareň nesmie byť pripojená v inej aplikácii (napr. Sinmark) – tú úplne zatvorte.'),
-      h('li', null, 'V telefóne zapnite Bluetooth aj Polohu (Android to vyžaduje pre vyhľadávanie).'),
-      h('li', null, 'Zapnite „Zobraziť všetky Bluetooth zariadenia“.'),
-      h('li', null, 'Reštartujte tlačiareň alebo aplikáciu a skúste znova.'),
+      h('li', null, h('b', null, 'Vypnite appku Sinmark úplne: '), 'podržte prst na jej ikone → Informácie o aplikácii → Vynútiť zastavenie. Kým je spustená, tlačiareň je „obsadená“.'),
+      h('li', null, 'Tlačiareň zapnite tlačidlom (nie len nabíjanie) a dajte ju k telefónu.'),
+      h('li', null, 'V telefóne zapnite Bluetooth aj Polohu (rýchle nastavenia – stiahnite lištu zhora).'),
+      h('li', null, 'Povoľte prehliadaču Bluetooth: Nastavenia → Aplikácie → Samsung Internet → Povolenia → Zariadenia v blízkosti → Povoliť, a Poloha → Povoliť.'),
+      h('li', null, 'Ak sa okno so zoznamom vôbec neotvorí, zatvorte a znova otvorte prehliadač a skúste to ešte raz.'),
+      h('li', null, 'Ak sa tlačiareň nezobrazí ani pri „Zobraziť všetky“, vypnite a zapnite tlačiareň a počkajte 10 sekúnd.'),
+      h('li', null, 'Ak je SK58 v Nastaveniach telefónu → Pripojenia → Bluetooth vedená ako pripojená, ťuknite na ňu a odpojte ju.'),
     ),
+    diag,
   );
 }
 
