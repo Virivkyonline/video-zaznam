@@ -1,5 +1,7 @@
 # Tlač etikiet
 
+**Otvoriť v mobile (Chrome):** https://tlac-etikiet.virivkyonlinecz.workers.dev
+
 Slovenská aplikácia na návrh a tlač etikiet na **Bluetooth tlačiarni SK58** (Sinmark)
 a podobných tlačiarňach s príkazmi ESC/POS. Funguje ako webová aplikácia (PWA) priamo
 v mobile – netreba nič inštalovať z obchodu, stačí ju otvoriť v prehliadači **Chrome
