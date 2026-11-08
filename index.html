@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Tlač etikiet</title>
+  <meta name="description" content="Návrh a tlač etikiet na Bluetooth tlačiarni SK58 – po slovensky.">
+  <meta name="theme-color" content="#2f6fec">
+  <meta name="color-scheme" content="light">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- DOMOV -->
+  <section class="view" id="view-home" data-tab="home">
+    <header class="home-head">
+      <h1 class="brand">Tlač etikiet</h1>
+      <button class="printer-badge" id="home-printer" type="button" aria-label="Tlačiareň"></button>
+    </header>
+    <div class="home-body">
+      <button class="printer-card" id="home-printer-card" type="button"></button>
+
+      <div class="quick">
+        <button class="quick-btn" id="q-create" type="button"><span class="qi qi-create"></span><span>Vytvoriť</span></button>
+        <button class="quick-btn" id="q-pdf" type="button"><span class="qi qi-pdf"></span><span>PDF</span></button>
+        <button class="quick-btn" id="q-image" type="button"><span class="qi qi-image"></span><span>Obrázok</span></button>
+        <button class="quick-btn" id="q-scan" type="button"><span class="qi qi-scan"></span><span>Skenovať</span></button>
+      </div>
+
+      <div class="section-head">
+        <h2>Posledné</h2>
+        <span class="muted" id="home-count"></span>
+      </div>
+      <div class="grid" id="home-list"></div>
+      <div class="empty" id="home-empty" hidden>
+        <p>Zatiaľ nemáte žiadne etikety.</p>
+        <p class="muted">Ťuknite na <b>Vytvoriť</b> alebo si vyberte hotovú <b>šablónu</b>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ŠABLÓNY -->
+  <section class="view" id="view-templates" data-tab="templates" hidden>
+    <header class="bar"><h1>Šablóny</h1></header>
+    <div class="page">
+      <div class="chips" id="tpl-filter"></div>
+      <div class="grid" id="tpl-list"></div>
+    </div>
+  </section>
+
+  <!-- JA / NASTAVENIA -->
+  <section class="view" id="view-me" data-tab="me" hidden>
+    <header class="bar"><h1>Nastavenia</h1></header>
+    <div class="page" id="me-body"></div>
+  </section>
+
+  <!-- TLAČIAREŇ (Bluetooth) -->
+  <section class="view" id="view-printer" hidden>
+    <header class="bar">
+      <button class="icon-btn" data-back type="button" aria-label="Späť"></button>
+      <h1>Bluetooth tlačiareň</h1>
+      <span class="bar-space"></span>
+    </header>
+    <div class="page" id="printer-body"></div>
+  </section>
+
+  <!-- EDITOR -->
+  <section class="view view-editor" id="view-editor" hidden>
+    <header class="bar editor-bar">
+      <button class="icon-btn" data-back type="button" aria-label="Späť"></button>
+      <button class="title-btn" id="ed-title" type="button"></button>
+      <button class="icon-btn" id="ed-undo" type="button" aria-label="Späť o krok"></button>
+      <button class="icon-btn" id="ed-redo" type="button" aria-label="Znova"></button>
+      <button class="btn btn-primary btn-sm" id="ed-print" type="button">Tlačiť</button>
+    </header>
+    <div class="ed-sub">
+      <button class="chip" id="ed-size" type="button"></button>
+      <span class="muted ed-hint" id="ed-hint"></span>
+      <button class="chip" id="ed-printer" type="button"></button>
+    </div>
+    <div class="ed-stage" id="ed-stage">
+      <canvas id="ed-canvas"></canvas>
+    </div>
+    <div class="ed-panel" id="ed-panel"></div>
+  </section>
+
+  <nav class="tabbar" id="tabbar">
+    <a href="#/" data-tab="home"><span class="ti" data-icon="home"></span><span>Domov</span></a>
+    <a href="#/sablony" data-tab="templates"><span class="ti" data-icon="templates"></span><span>Šablóny</span></a>
+    <a href="#/ja" data-tab="me"><span class="ti" data-icon="user"></span><span>Ja</span></a>
+  </nav>
+
+  <div id="sheets"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="vendor/qrcode.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
