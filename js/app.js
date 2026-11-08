@@ -15,9 +15,9 @@ import {
 import { openEditor, closeEditor, editorLabel, refreshEditor, setPrinterChip } from './editor.js';
 import { scanCode, scannerSupported } from './scan.js';
 import { imageFileToDataURL, openPdf, renderPdfPage } from './importers.js';
-import { dataRecords } from './datasource.js';
+import { dataRecords, dataColumns } from './datasource.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.2.0';
 
 // ---------------------------------------------------------------- navigácia
 let current = '';
@@ -41,8 +41,10 @@ function back() {
   else go('#/');
 }
 
+let navToken = 0;
 async function route() {
   navCount++;
+  const token = ++navToken;
   const hash = location.hash || '#/';
   const [, page, arg] = hash.match(/^#\/?([^/]*)\/?(.*)$/) || [];
   let view = 'home';
@@ -65,6 +67,7 @@ async function route() {
   else if (view === 'printer') renderPrinter();
   else if (view === 'editor') {
     const label = await getLabel(decodeURIComponent(arg));
+    if (token !== navToken) return; // medzitým sa prešlo inam
     if (!label) { toast('Etiketa sa nenašla'); go('#/'); return; }
     openEditor(label, { save: (l) => putLabel(l), print: openPrint, openPrinter: () => go('#/tlaciaren') });
     setPrinterChip(getStatus());
@@ -117,14 +120,23 @@ function updatePrinterUI() {
 }
 
 // ---------------------------------------------------------------- DOMOV
+let homeQuery = '';
+const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
 async function renderHome() {
   const list = $('#home-list');
   const labels = await allLabels();
   await Promise.all(labels.map((l) => preloadImages(l)));
+  const search = $('#home-search');
+  search.hidden = labels.length < 6;
+  if (search.hidden) homeQuery = '';
+  const q = norm(homeQuery);
+  const shown = q ? labels.filter((l) => norm(l.name).includes(q) || l.items.some((it) => norm(it.text || it.data).includes(q))) : labels;
   list.innerHTML = '';
   $('#home-empty').hidden = labels.length > 0;
   $('#home-count').textContent = labels.length ? `${labels.length}` : '';
-  for (const l of labels) list.append(labelCard(l));
+  for (const l of shown) list.append(labelCard(l));
+  if (q && !shown.length) list.append(h('p', { class: 'muted' }, 'Nič sa nenašlo.'));
   updatePrinterUI();
 }
 
@@ -424,9 +436,22 @@ async function openPrint(label) {
   let copies = 1;
   let start = label.serial.next ?? label.serial.start ?? 1;
   let from = 1, to = nRec;
+  let copyCol = -1; // stĺpec s počtom kópií
+  const recs = hasData ? dataRecords(label.data) : [];
+  const rowCopies = (r) => {
+    if (copyCol < 0) return copies;
+    const v = Math.round(parseFloat(String(recs[r]?.[copyCol] ?? '').replace(',', '.')));
+    return Number.isFinite(v) ? Math.max(0, Math.min(999, v)) : 1;
+  };
+  // zoznam riadkov na tlač (riadok sa opakuje podľa počtu kópií)
+  const jobRows = () => {
+    const list = [];
+    for (let r = from - 1; r <= to - 1; r++) for (let c = rowCopies(r); c > 0; c--) list.push(r);
+    return list;
+  };
   const total = h('div', { class: 'print-total' });
   const updTotal = () => {
-    const n = (hasData ? Math.max(0, to - from + 1) : 1) * copies;
+    const n = hasData ? jobRows().length : copies;
     total.textContent = `Spolu sa vytlačí: ${n} ${n === 1 ? 'etiketa' : n < 5 ? 'etikety' : 'etikiet'}`;
   };
   let dlg;
@@ -437,10 +462,17 @@ async function openPrint(label) {
     const toS = stepper(nRec, { step: 1, min: 1, max: nRec, dec: 0 }, (v) => { to = v; if (from > to) { from = to; fromS.set(from); } updTotal(); });
     controls.push(h('div', { class: 'grid2' }, field('Od záznamu', fromS), field('Po záznam', toS)));
   }
+  const copiesField = field(hasData ? 'Kópií z každého' : 'Počet kópií', stepper(1, { step: 1, min: 1, max: 999, dec: 0 }, (v) => { copies = v; updTotal(); }));
   controls.push(h('div', { class: 'grid2' },
-    field(hasData ? 'Kópií z každého' : 'Počet kópií', stepper(1, { step: 1, min: 1, max: 999, dec: 0 }, (v) => { copies = v; updTotal(); })),
+    copiesField,
     serial ? field('Začať číslom', stepper(start, { step: 1, min: 0, max: 99999999, dec: 0 }, (v) => { start = v; dlg?.refresh(); })) : null,
   ));
+  if (hasData) {
+    controls.push(field('Počet kópií podľa stĺpca', select(
+      [{ value: -1, label: '— rovnaký pre všetky —' }, ...dataColumns(label.data).map((c, i) => ({ value: i, label: c }))],
+      -1, (v) => { copyCol = Number(v); copiesField.hidden = copyCol >= 0; updTotal(); },
+    ), 'Napr. stĺpec „Počet“ – z každého riadku sa vytlačí toľko etikiet, koľko je v ňom uvedené.'));
+  }
   controls.push(total);
   updTotal();
   dlg = printDialog({
@@ -458,8 +490,17 @@ async function openPrint(label) {
         + (hasData ? ` · náhľad záznamu ${from}` : '');
     },
     run: async ({ signal, onProgress }) => {
-      const n = (hasData ? to - from + 1 : 1) * copies;
-      await printLabel(label, { copies, serialStart: start, signal, onProgress, rowFrom: hasData ? from - 1 : undefined, rowTo: hasData ? to - 1 : undefined });
+      let n;
+      if (hasData) {
+        const list = jobRows();
+        n = list.length;
+        if (!n) throw new Error('Podľa zvoleného stĺpca sa nemá vytlačiť žiadna etiketa.');
+        const step = label.serial?.step || 1;
+        await printJobs(n, (i) => ({ label, vars: makeVars(label, start + i * step, list[i]) }), { signal, onProgress });
+      } else {
+        n = copies;
+        await printLabel(label, { copies, serialStart: start, signal, onProgress });
+      }
       if (serial) {
         label.serial.next = start + n * (label.serial.step || 1);
         start = label.serial.next;
@@ -575,7 +616,8 @@ function openHelp() {
         h('ul', null,
           h('li', null, 'Zapnite tlačiareň SK58 a úplne zatvorte aplikáciu Sinmark/OpenLabel.'),
           h('li', null, 'Ťuknite na ikonu tlačiarne vpravo hore → Vyhľadať tlačiareň → vyberte SK58_… → Spárovať.'),
-          h('li', null, 'Používajte prehliadač Chrome v Androide (na iPhone aplikáciu Bluefy).'))),
+          h('li', null, 'Funguje v prehliadači Samsung Internet aj Chrome v Androide (na iPhone v aplikácii Bluefy).'),
+          h('li', null, 'Samsung Internet: ak sa okno so zariadeniami neotvorí, povoľte prehliadaču „Zariadenia v blízkosti“ a Polohu (Nastavenia → Aplikácie → Samsung Internet → Povolenia).'))),
       sec('Nová etiketa',
         h('p', null, 'Domov → Vytvoriť, zvoľte veľkosť (napr. 50 × 30 mm) a pridávajte prvky: text, čiarový kód, QR kód, obrázok, tabuľku, ikonu, dátum, číslovanie, čiaru či rámček. Prvok presuniete ťahaním, veľkosť zmeníte modrými úchytmi.')),
       sec('Hromadná tlač z Excelu',
@@ -589,7 +631,7 @@ function openHelp() {
         h('p', null, 'PDF z e-shopu alebo prepravcu: Domov → PDF. Pri viacstranovom PDF môžete vytlačiť všetky strany naraz (každá strana = jedna etiketa) alebo jednu stranu upraviť.')),
       sec('Ak tlač nesedí na etiketu',
         h('ul', null,
-          h('li', null, 'Nastavenia → Vytlačiť testovaciu etiketu. Čísla na pravítku sú mm od horného okraja.'),
+          h('li', null, 'Ja → Sprievodca nastavením (test): vytlačí pravítko, zmeriate polohu čiarky 10 a aplikácia nastaví okraj sama.'),
           h('li', null, 'Upravte Nepotlačiteľný pás hore, Posun doprava a Posun nadol.'),
           h('li', null, 'Ak je tlač hore nohami alebo otočená, v editore ťuknite na rozmer etikety → Smer tlače.'))),
     ),
@@ -708,31 +750,72 @@ function renderPrinter() {
   );
 }
 
+/** Sprievodca nastavením tlače: testovacie etikety s pravítkom a uloženie zistených hodnôt. */
 async function printTest() {
   const cfg = getSettings();
   const sizes = SIZE_PRESETS.map(([w, hh]) => ({ value: `${w}x${hh}`, label: `${w} × ${hh} mm` }));
   let val = `${cfg.lastW}x${cfg.lastH}`;
-  if (!sizes.find((s) => s.value === val)) sizes.unshift({ value: val, label: `${cfg.lastW} × ${cfg.lastH} mm` });
+  if (!sizes.find((x) => x.value === val)) sizes.unshift({ value: val, label: `${cfg.lastW} × ${cfg.lastH} mm` });
+  let count = 2;
+  let feed = cfg.feed;
+  let usedSkip = null; // nepotlačiteľný pás použitý pri poslednom teste
+  let measured = 10;
   let s;
   const msg = h('div', { class: 'print-msg' });
-  const go2 = h('button', { class: 'btn btn-primary', type: 'button' }, 'Vytlačiť test');
+  const result = h('div', { class: 'calib-result', hidden: true });
+  const go2 = h('button', { class: 'btn btn-primary', type: 'button' }, icon('printer', 20), h('span', null, 'Vytlačiť test'));
   go2.addEventListener('click', async () => {
     go2.disabled = true;
     const [w, hh] = val.split('x').map(Number);
+    const testCfg = { ...getSettings(), feed };
     try {
       await ensureConnected();
+      msg.className = 'print-msg';
       msg.textContent = 'Posielam…';
-      await printLabel(testLabel(w, hh), { onProgress: (i, n, f) => { msg.textContent = `Posielam… ${Math.round(f * 100)} %`; } });
-      msg.textContent = 'Odoslané. Skontrolujte, či je čiarka „10“ naozaj 10 mm od horného okraja etikety.';
+      const label = testLabel(w, hh);
+      await printJobs(count, () => ({ label, vars: makeVars(label) }), {
+        cfg: testCfg,
+        onProgress: (i, n, f) => { msg.textContent = `Posielam ${i + 1}/${n}… ${Math.round(f * 100)} %`; },
+      });
+      usedSkip = testCfg.topSkip || 0;
+      msg.textContent = 'Odoslané. Teraz skontrolujte vytlačené etikety podľa krokov nižšie.';
       msg.className = 'print-msg ok';
+      result.hidden = false;
     } catch (e) { msg.textContent = e.message; msg.className = 'print-msg error'; } finally { go2.disabled = false; }
   });
+  const save = h('button', { class: 'btn btn-primary btn-block', type: 'button' }, 'Uložiť zistené nastavenie');
+  save.addEventListener('click', () => {
+    const skip = Math.max(0, Math.min(15, Math.round((measured - 10 + (usedSkip ?? cfg.topSkip)) * 2) / 2));
+    setSettings({ topSkip: skip, feed });
+    refreshEditor();
+    toast(`Uložené: nepotlačiteľný pás ${fmt(skip)} mm`);
+    s.close();
+    if (current === 'me') renderMe();
+  });
+  result.append(
+    h('div', { class: 'props-sub' }, 'Vyhodnotenie'),
+    h('ol', { class: 'tips' },
+      h('li', null, 'Pravítkom zmerajte, ako ďaleko od horného okraja etikety je čiarka s číslom 10.'),
+      h('li', null, 'Ak je obsah posunutý doľava alebo doprava, upravte v Nastaveniach „Posun doprava“.'),
+      h('li', null, 'Ak druhá etiketa nezačína rovnako ako prvá alebo sa preskakujú etikety, skúste iný posun papiera a vytlačte test znova.')),
+    field('Čiarka „10“ je od horného okraja etikety', stepper(10, { step: 0.5, min: 0, max: 40, suffix: 'mm' }, (v) => { measured = v; })),
+    save,
+  );
   s = openSheet({
-    title: 'Testovacia etiketa',
+    title: 'Nastavenie tlače – test',
     body: h('div', null,
+      h('p', { class: 'field-hint' }, 'Vytlačí sa rámček a pravítko v milimetroch. Podľa výsledku aplikácia nastaví nepotlačiteľný pás a posun papiera.'),
       field('Veľkosť etikety vo vašej tlačiarni', select(sizes, val, (v) => { val = v; })),
-      h('p', { class: 'field-hint' }, 'Vytlačí sa rámček a pravítko v milimetroch. Podľa neho nastavíte posun a nepotlačiteľný okraj v Nastaveniach.'),
-      msg),
+      h('div', { class: 'grid2' },
+        field('Počet testovacích etikiet', stepper(count, { step: 1, min: 1, max: 5, dec: 0 }, (v) => { count = v; })),
+        field('Posun papiera', select([
+          { value: 'gsff', label: 'Medzera (GS FF)' },
+          { value: 'ff', label: 'Medzera (FF)' },
+          { value: 'fixed', label: 'Pevná dĺžka' },
+          { value: 'none', label: 'Žiadny' },
+        ], feed, (v) => { feed = v; })),
+      ),
+      msg, result),
     footer: [h('button', { class: 'btn', type: 'button', onclick: () => s.close() }, 'Zavrieť'), go2],
   });
 }
@@ -795,7 +878,7 @@ async function renderMe() {
         { value: 'none', label: 'Neposúvať papier' },
       ], cfg.feed, (v) => { setSettings({ feed: v }); feedFixed.hidden = v !== 'fixed'; })),
       feedFixed,
-      h('button', { class: 'btn btn-block', type: 'button', onclick: () => printTest() }, icon('printer', 20), h('span', null, 'Vytlačiť testovaciu etiketu')),
+      h('button', { class: 'btn btn-block', type: 'button', onclick: () => printTest() }, icon('printer', 20), h('span', null, 'Sprievodca nastavením (test)')),
     ),
 
     h('h2', { class: 'sec-title' }, 'Rozšírené'),
@@ -832,7 +915,7 @@ async function renderMe() {
       }, 'Nainštalovať na plochu') : null,
       h('p', null, h('b', null, 'Tlač etikiet'), ` · verzia ${VERSION}`),
       h('p', { class: 'muted' }, `Bluetooth: ${bluetoothSupport().ok ? 'podporovaný ✓' : 'nepodporovaný ✗'} · Skener kódov: ${scannerSupported() ? 'áno ✓' : 'nie ✗'}`),
-      h('p', { class: 'muted small' }, 'Pre tlačiarne SK58 (Sinmark) a podobné Bluetooth tlačiarne s príkazmi ESC/POS, 203 dpi, šírka tlače 48 mm. Najlepšie funguje v Chrome na Androide.'),
+      h('p', { class: 'muted small' }, 'Pre tlačiarne SK58 (Sinmark) a podobné Bluetooth tlačiarne s príkazmi ESC/POS, 203 dpi, šírka tlače 48 mm. Funguje v Samsung Internete aj v Chrome na Androide.'),
     ),
   );
 }
@@ -874,6 +957,7 @@ function init() {
   $('#q-scan').addEventListener('click', actionScan);
   $('#home-history').innerHTML = svgIcon('clock', 24);
   $('#home-history').addEventListener('click', openHistory);
+  $('#home-search').addEventListener('input', (e) => { homeQuery = e.target.value; renderHome(); });
   $('.qi-create').innerHTML = svgIcon('plus', 26);
   $('.qi-pdf').innerHTML = svgIcon('doc', 26);
   $('.qi-image').innerHTML = svgIcon('image', 26);

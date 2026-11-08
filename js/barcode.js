@@ -7,6 +7,8 @@ export const FORMATS = [
   { id: 'UPCA', name: 'UPC-A', hint: '11 alebo 12 číslic' },
   { id: 'CODE128', name: 'Code 128', hint: 'písmená, číslice a znaky bez diakritiky' },
   { id: 'CODE39', name: 'Code 39', hint: 'A–Z, 0–9 a - . $ / + % medzera' },
+  { id: 'ITF14', name: 'ITF-14 (kartóny)', hint: '13 alebo 14 číslic' },
+  { id: 'ITF', name: 'ITF (2 z 5)', hint: 'párny počet číslic' },
 ];
 
 // ---------------------------------------------------------------- EAN / UPC
@@ -190,8 +192,36 @@ function code39(data) {
   return { ok: true, bits, text: s, layout: 'plain' };
 }
 
+// ---------------------------------------------------------------- ITF (Interleaved 2 of 5)
+const ITF_PAT = ['nnwwn', 'wnnnw', 'nwnnw', 'wwnnn', 'nnwnw', 'wnwnn', 'nwwnn', 'nnnww', 'wnnwn', 'nwnwn'];
+
+function itfBits(d) {
+  let bits = '1010'; // štart: úzka čiara, medzera, čiara, medzera
+  for (let i = 0; i < d.length; i += 2) {
+    const a = ITF_PAT[+d[i]], b = ITF_PAT[+d[i + 1]];
+    for (let k = 0; k < 5; k++) {
+      bits += a[k] === 'w' ? '111' : '1';
+      bits += b[k] === 'w' ? '000' : '0';
+    }
+  }
+  return bits + '111' + '0' + '1'; // stop: široká čiara, úzka medzera, úzka čiara
+}
+
+function itf(data) {
+  let d = String(data).replace(/\s/g, '');
+  if (!/^\d+$/.test(d)) return { ok: false, error: 'ITF: povolené sú len číslice' };
+  if (d.length % 2) d = '0' + d;
+  return { ok: true, bits: itfBits(d), text: d, layout: 'plain' };
+}
+
+function itf14(data) {
+  const r = gtin(data, 14, 'ITF-14');
+  if (r.error) return { ok: false, error: r.error };
+  return { ok: true, bits: itfBits(r.digits), text: r.digits, layout: 'plain' };
+}
+
 // ---------------------------------------------------------------- verejné API
-const ENCODERS = { EAN13: ean13, EAN8: ean8, UPCA: upca, CODE128: code128, CODE39: code39 };
+const ENCODERS = { EAN13: ean13, EAN8: ean8, UPCA: upca, CODE128: code128, CODE39: code39, ITF14: itf14, ITF: itf };
 const cache = new Map();
 
 /**
@@ -216,5 +246,6 @@ export function guessFormat(text) {
   if (/^\d{13}$/.test(d) && gtinCheck(d.slice(0, 12)) === d[12]) return 'EAN13';
   if (/^\d{8}$/.test(d) && gtinCheck(d.slice(0, 7)) === d[7]) return 'EAN8';
   if (/^\d{12}$/.test(d) && gtinCheck(d.slice(0, 11)) === d[11]) return 'UPCA';
+  if (/^\d{14}$/.test(d) && gtinCheck(d.slice(0, 13)) === d[13]) return 'ITF14';
   return 'CODE128';
 }

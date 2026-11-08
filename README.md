@@ -1,11 +1,11 @@
 # Tlač etikiet
 
-**Otvoriť v mobile (Chrome):** https://tlac-etikiet.virivkyonlinecz.workers.dev
+**Otvoriť v mobile (Samsung Internet alebo Chrome):** https://tlac-etikiet.virivkyonlinecz.workers.dev
 
 Slovenská aplikácia na návrh a tlač etikiet na **Bluetooth tlačiarni SK58** (Sinmark)
 a podobných tlačiarňach s príkazmi ESC/POS. Funguje ako webová aplikácia (PWA) priamo
-v mobile – netreba nič inštalovať z obchodu, stačí ju otvoriť v prehliadači **Chrome
-v Androide** a voliteľne si ju pridať na plochu.
+v mobile – netreba nič inštalovať z obchodu, stačí ju otvoriť v prehliadači **Samsung Internet**
+alebo **Chrome** v Androide a voliteľne si ju pridať na plochu.
 
 ## Čo vie
 
@@ -53,6 +53,10 @@ Etikety sa ukladajú v prehliadači (IndexedDB). Aplikácia funguje aj offline.
 3. V aplikácii ťuknite na ikonu tlačiarne → **Vyhľadať tlačiareň** → vyberte napr.
    `SK58_D63F` → **Spárovať**.
 4. Ak sa nezobrazí, zapnite **Zobraziť všetky Bluetooth zariadenia**.
+
+V **Samsung Internete** (verzia 6.4 a novšia) Bluetooth funguje. Ak sa okno so zariadeniami
+neotvorí, povoľte prehliadaču *Zariadenia v blízkosti* a *Polohu*: Nastavenia → Aplikácie →
+Samsung Internet → Povolenia. Na plochu: menu ☰ → **Pridať stránku do → Domovská obrazovka**.
 
 Na iPhone Safari Web Bluetooth nepodporuje – dá sa použiť prehliadač **Bluefy**.
 

@@ -61,7 +61,9 @@ export function bluetoothSupport() {
       ok: false,
       reason: ios
         ? 'Safari na iPhone nepodporuje Web Bluetooth. Otvorte aplikáciu v prehliadači Bluefy (App Store).'
-        : 'Tento prehliadač nepodporuje Web Bluetooth. Otvorte aplikáciu v prehliadači Chrome.',
+        : /SamsungBrowser/i.test(navigator.userAgent)
+          ? 'Táto verzia Samsung Internetu nepodporuje Bluetooth. Aktualizujte ho v Galaxy Store alebo Obchode Play.'
+          : 'Tento prehliadač nepodporuje Web Bluetooth. Otvorte aplikáciu v Samsung Internete alebo v Chrome.',
     };
   }
   return { ok: true };
@@ -403,7 +405,7 @@ export const INIT = new Uint8Array([ESC, 0x40]);
  * Pošle do tlačiarne `count` etikiet; `make(i)` vráti { label, vars } pre i-tu etiketu.
  */
 export async function printJobs(count, make, o = {}) {
-  const cfg = getSettings();
+  const cfg = o.cfg || getSettings();
   if (state.status !== 'connected') {
     const ok = await reconnect({ quiet: true });
     if (!ok) throw new Error('Tlačiareň nie je pripojená.');

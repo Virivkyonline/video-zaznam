@@ -1,10 +1,10 @@
-// Skenovanie čiarových a QR kódov fotoaparátom (BarcodeDetector v Chrome pre Android).
+// Skenovanie čiarových a QR kódov fotoaparátom (BarcodeDetector v prehliadačoch na Androide).
 
 import { h, openSheet, svgIcon } from './ui.js';
 
 const FORMAT_MAP = {
   ean_13: 'EAN13', ean_8: 'EAN8', upc_a: 'UPCA', code_128: 'CODE128', code_39: 'CODE39', qr_code: 'QR',
-  itf: 'CODE128', codabar: 'CODE128', code_93: 'CODE128', upc_e: 'CODE128', data_matrix: 'QR', aztec: 'QR', pdf417: 'QR',
+  itf: 'ITF', codabar: 'CODE128', code_93: 'CODE128', upc_e: 'CODE128', data_matrix: 'QR', aztec: 'QR', pdf417: 'QR',
 };
 
 export function scannerSupported() {
@@ -47,7 +47,7 @@ export function scanCode({ title = 'Skenovať kód' } = {}) {
         return;
       }
       if (!('BarcodeDetector' in window)) {
-        status.textContent = 'Tento prehliadač nevie čítať kódy z fotoaparátu. Zadajte kód ručne (alebo použite Chrome v Androide).';
+        status.textContent = 'Tento prehliadač nevie čítať kódy z fotoaparátu. Zadajte kód ručne.';
         body.querySelector('.scan-view').hidden = true;
         return;
       }

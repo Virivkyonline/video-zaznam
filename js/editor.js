@@ -84,7 +84,7 @@ export function openEditor(label, { save, print, openPrinter }) {
 }
 
 export function closeEditor() {
-  if (E.label) persist.flush();
+  if (E.label) { commitSoon.flush(); persist.flush(); }
   E.label = null;
   E.selId = null;
 }
@@ -103,6 +103,7 @@ export function setPrinterChip(st) {
 
 function updateHeader() {
   const l = E.label;
+  if (!l) return;
   $('#ed-title').textContent = l.name || 'Etiketa';
   $('#ed-size').textContent = `${fmt(l.w)} × ${fmt(l.h)} mm`;
   const dir = labelDir(l);
@@ -123,6 +124,7 @@ function updateHeader() {
 
 // ---------------------------------------------------------------- história
 function commit() {
+  if (!E.label) return;
   const snap = snapshot();
   if (snap === E.hist[E.hi]) return;
   E.hist = E.hist.slice(0, E.hi + 1);
@@ -438,7 +440,7 @@ function selectItem(id) {
 
 function update(it, patch, { soon = true } = {}) {
   Object.assign(it, patch);
-  if (it.type === 'text' && ['text', 'size', 'font', 'bold', 'italic', 'wrap', 'ls', 'lh', 'fit'].some((k) => k in patch)) autoGrow(it);
+  if (it.type === 'text' && ['text', 'size', 'font', 'bold', 'italic', 'wrap', 'ls', 'lh', 'fit', 'vertical'].some((k) => k in patch)) autoGrow(it);
   draw();
   if (soon) commitSoon(); else commit();
 }
@@ -689,6 +691,7 @@ function textProps(it, body) {
       field('Rozostup písmen', stepper(it.ls || 0, { step: 0.1, min: -0.5, max: 5, suffix: 'mm' }, (v) => update(it, { ls: v }))),
     ),
     row('Zalamovať riadky', toggle(it.wrap !== false, (v) => update(it, { wrap: v }))),
+    row('Zvislý text (písmená pod sebou)', toggle(!!it.vertical, (v) => update(it, { vertical: v }, { soon: false }))),
     row('Zmenšiť písmo, aby sa text zmestil', toggle(!!it.fit, (v) => update(it, { fit: v }))),
     h('p', { class: 'field-hint' }, 'Premenné: {datum} = dnešný dátum, {datum+7} = o 7 dní, {cas} = čas, {den} = deň v týždni, {cislo} = poradové číslo (pri tlači viacerých kópií sa zvyšuje). Stĺpce z Excelu: {Názov stĺpca}.'),
   );
@@ -702,7 +705,7 @@ function styleBtn(it, key, content, title) {
 
 function barcodeProps(it, body) {
   const msg = h('div', { class: 'field-hint' });
-  const inp = h('input', { class: 'input', type: 'text', value: it.data || '', inputmode: /EAN|UPC/.test(it.format) ? 'numeric' : 'text', autocomplete: 'off' });
+  const inp = h('input', { class: 'input', type: 'text', value: it.data || '', inputmode: /EAN|UPC|ITF/.test(it.format) ? 'numeric' : 'text', autocomplete: 'off' });
   const validate = () => {
     const raw = applyVars(it.data, makeVars(E.label));
     const enc = encodeBarcode(it.format, raw);
@@ -710,7 +713,7 @@ function barcodeProps(it, body) {
     if (!enc.ok) { msg.textContent = enc.error; return; }
     const { m } = barcodeModuleDots(it, enc, localSize(it).w);
     let t = `Kódované: ${enc.text}`;
-    if (/EAN|UPC/.test(it.format) && raw.replace(/\D/g, '').length < enc.text.length) t += ` (doplnená kontrolná číslica ${enc.text.slice(-1)})`;
+    if (/EAN|UPC|ITF14/.test(it.format) && raw.replace(/\D/g, '').length < enc.text.length) t += ` (doplnená kontrolná číslica ${enc.text.slice(-1)})`;
     if (m < 1) t += ' · ⚠ Kód je príliš úzky – zväčšite šírku rámčeka.';
     else if (m < 2) t += ' · ⚠ Tenké čiary (1 bod) – pre spoľahlivé čítanie zväčšite šírku.';
     msg.textContent = t;
@@ -727,7 +730,7 @@ function barcodeProps(it, body) {
   });
   const fmtSel = select(FORMATS.map((f) => ({ value: f.id, label: f.name })), it.format, (v) => {
     update(it, { format: v }, { soon: false });
-    inp.inputMode = /EAN|UPC/.test(v) ? 'numeric' : 'text';
+    inp.inputMode = /EAN|UPC|ITF/.test(v) ? 'numeric' : 'text';
     validate();
   });
   body.append(

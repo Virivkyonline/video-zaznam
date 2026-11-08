@@ -206,6 +206,12 @@ export function qrMatrix(text, ec = 'M') {
 const LH = 1.15;
 const lhOf = (it) => it.lh || LH;
 
+/** Text prvku po dosadení premenných; zvislý text = každé písmeno na novom riadku. */
+function textOf(it, vars) {
+  const t = applyVars(it.text ?? '', vars);
+  return it.vertical ? [...t.replace(/\n/g, ' ')].map((ch) => (ch === ' ' ? '' : ch)).join('\n') : t;
+}
+
 function setFont(ctx, it, px, s = DPMM) {
   ctx.font = `${it.italic ? 'italic ' : ''}${it.bold ? '700' : '400'} ${px}px ${fontCss(it.font)}`;
   if ('letterSpacing' in ctx) ctx.letterSpacing = it.ls ? `${it.ls * s}px` : '0px';
@@ -235,8 +241,8 @@ function wrapLines(ctx, text, maxW, wrap) {
 }
 
 function layoutText(ctx, it, W, H, s, vars) {
-  const str = applyVars(it.text ?? '', vars);
-  const wrap = it.wrap !== false;
+  const str = textOf(it, vars);
+  const wrap = it.wrap !== false && !it.vertical;
   let pt = it.size || 10;
   const fits = (p) => {
     const px = p * PT_MM * s;
@@ -291,7 +297,7 @@ export function measureText(it, vars) {
   const s = DPMM;
   const px = (it.size || 10) * PT_MM * s;
   setFont(c, it, px);
-  const lines = applyVars(it.text ?? '', vars).split('\n');
+  const lines = textOf(it, vars).split('\n');
   const w = Math.max(...lines.map((l) => c.measureText(l).width), px * 0.6);
   return { w: w / s + 0.6, h: (lines.length * px * lhOf(it)) / s + 0.2 };
 }
@@ -302,7 +308,7 @@ export function measureTextHeight(it, widthMm, vars) {
   const s = DPMM;
   const px = (it.size || 10) * PT_MM * s;
   setFont(c, it, px);
-  const lines = wrapLines(c, applyVars(it.text ?? '', vars), widthMm * s, it.wrap !== false);
+  const lines = wrapLines(c, textOf(it, vars), widthMm * s, it.wrap !== false && !it.vertical);
   return (lines.length * px * lhOf(it)) / s + 0.2;
 }
 
